@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@theme {
+  --color-mandarin: #ff6b00;
+  --color-mandarin-deep: #e35400;
+  --color-forest: #0f3d2a;
+  --color-forest-deep: #082a1c;
+  --color-forest-soft: #1d5a3f;
+  --color-crest: #ffc72c;
+  --color-crest-soft: #ffe08a;
+  --color-cream: #fff6e5;
+  --color-ink: #0b1f16;
+
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+
+  --shadow-chunk: 5px 5px 0 0 #0b1f16;
+  --shadow-chunk-lg: 8px 8px 0 0 #0b1f16;
+  --shadow-chunk-sm: 3px 3px 0 0 #0b1f16;
+
+  --animate-wave: wave 3.2s linear infinite;
+  --animate-wave-slow: wave 5s linear infinite;
+  --animate-pop: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animate-bob: bob 3s ease-in-out infinite;
+
+  @keyframes wave {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes pop {
+    0% { transform: scale(0.85); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+}
+
+html { background: var(--color-forest); }
+body { background: var(--color-cream); color: var(--color-ink); }
+
+.press { transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.press:hover { transform: translate(-1px, -1px); }
+.press:active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 #0b1f16; }
+
+.grain {
+  background-image: radial-gradient(rgba(11, 31, 22, 0.12) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
