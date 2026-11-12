@@ -1077,7 +1077,7 @@ function WalletKeyCard({ state }: { state: State }) {
         <p className="font-mono text-xs font-bold text-ink/50">{short(state.user.agentAddress)}</p>
       </div>
       <p className="mt-2 text-sm leading-relaxed text-ink/60">
-        {state.user.claimerActive ? 'This is your old wallet, which no longer claims for you. Keep a copy of its key to recover any remaining G$ or CELO. Do not deposit new funds here.' : 'Jara claims your daily G$ with this wallet. It is yours: you can view its private key and keep your own copy.'} Jara asks your GoodDollar wallet for a free signature first, so only you can see it.
+        {state.user.claimerActive ? 'This is your old wallet, which no longer claims for you. Withdraw any G$ left in it, and keep a copy of its key if you want the leftover CELO. Jara deletes its copy of the key once this wallet is empty. Do not deposit new funds here.' : 'Jara claims your daily G$ with this wallet. It is yours: you can view its private key and keep your own copy.'} Jara asks your GoodDollar wallet for a free signature first, so only you can see it.
       </p>
       {privateKey ? (
         <div className="mt-4 rounded-xl border border-mandarin/40 bg-[#fff8ef] px-4 py-3">

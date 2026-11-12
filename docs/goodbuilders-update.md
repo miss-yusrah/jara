@@ -24,9 +24,9 @@ Both contracts are deployed on Celo and have Sourcify exact-match source verific
 - Claimer factory: `0x62A5700C5b6fb6Aedea0dD84b79D5722B7727a3a`
 - Spending contract: `0x98720954737585183F01a5f6eaCDD8442e9c780F`
 
-At the November 12 safety deployment, five connected users awaited upgrade and none had activated it. The 26 retained wallet keys use per-wallet envelope encryption under a server-held secret; AWS KMS is **not** enabled. Existing balances, retained keys and unrevoked permissions remain exposed until owners migrate and recover their funds. A compromised server can also consume an upgraded user’s authorized spending budget and access the treasury’s own funds. We are not claiming those residual risks have disappeared.
+At the November 12 safety deployment, five connected users awaited upgrade and none had activated it. The 26 retained wallet keys use per-wallet envelope encryption under a server-held secret; AWS KMS is **not** enabled. We are retiring these keys rather than guarding them: an admin check deletes a stored key once its wallet is not linked to any identity, holds no G$ and has nothing in flight, which covers owners who have upgraded and withdrawn as well as accounts that never linked an identity. It fails closed and has not yet been run in production. Until a key is deleted, its balance, retained key and unrevoked permissions remain exposed. A compromised server can also consume an upgraded user’s authorized spending budget and access the treasury’s own funds. We are not claiming those residual risks have disappeared.
 
-Code: [claim contracts](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/contracts/src/JaraClaimer.sol), [spending policy](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/contracts/src/JaraSpending.sol), [migration checks](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/src/lib/claimers.ts), [legacy key export](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/src/app/api/wallet/key/route.ts), [key-provider checks](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/src/lib/custody.ts).
+Code: [claim contracts](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/contracts/src/JaraClaimer.sol), [spending policy](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/contracts/src/JaraSpending.sol), [migration checks](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/src/lib/claimers.ts), [legacy key export](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/src/app/api/wallet/key/route.ts), [key-provider checks](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/src/lib/custody.ts), [key retirement](https://github.com/miss-yusrah/jara/blob/a1253e0803f0d19453ebf126dd95f85967d2035a/src/lib/key-retirement.ts).
 
 **J-01 — Demo/live separation**
 
@@ -74,7 +74,7 @@ Code: [identity checks and budget reservations](https://github.com/miss-yusrah/j
 
 **Validation and remaining work**
 
-- 122 application tests, typecheck, lint and the production build passed.
+- 130 application tests, typecheck, lint and the production build passed.
 - All 16 local Solidity tests passed again; earlier contract checks included the combined migration/claim/spending flow on a Celo fork with two verified identities.
 - Live checks covered keyless signup, blocked demo deposits, Telegram group/foreign-sender rejection, public endpoints and admin access control. Migration was tested against a private production database snapshot before activation.
 - Existing owners still need to approve their wallet migration and recover old balances. One previously recorded legacy claim is still pending and may block the affected account’s upgrade until reconciled; its original transaction journal has been preserved. We have not completed an independent contract audit or a production owner-migration walkthrough, and do not present tests or source verification as substitutes for that review.
