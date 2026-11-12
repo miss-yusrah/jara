@@ -21,6 +21,7 @@ const { directIntent } = require('../src/lib/agent/fallback.ts')
 const { ApiError, readApiResponse } = require('../src/lib/api-response.ts')
 const billRoute = require('../src/app/api/bills/route.ts')
 const chatRoute = require('../src/app/api/chat/route.ts')
+const walletRoute = require('../src/app/api/wallet/route.ts')
 // These route unit tests have no Next request lifecycle. Auto-pay integration
 // tests exercise the queued work separately; it must not block these replies.
 require('../src/lib/auto-pay-after.ts').scheduleAutoPay = () => {}
@@ -99,6 +100,23 @@ test('chat can show a greeting without waiting for either AI or balance services
     assert.match(result.reply.text, /How can I help/)
     assert.equal(result.messages.length, 2)
   } finally { session.requireUser = originals.requireUser; shared.userState = originals.userState; jars.snapshot = originals.snapshot; llm.llmReachable = originals.reachable }
+})
+
+test('retrying a withdrawal returns one transfer and one activity receipt', async () => {
+  const user = await fixture()
+  const originals = { requireUser: session.requireUser, userState: shared.userState }
+  session.requireUser = async () => user
+  shared.userState = async () => ({ activity: await users.listActivity(user.id) })
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await walletRoute.POST(post('/api/wallet', { action: 'withdraw', requestId: 'receipt-replay' }))
+      assert.equal(response.status, 200)
+      const { activity } = await response.json()
+      assert.equal(activity.filter((a) => a.type === 'move').length, 1)
+    }
+    assert.equal(await chain.gdBalance(user.agentAddress), 0n)
+    assert.equal(await chain.gdBalance(user.rootAddress), parseEther('1000'))
+  } finally { session.requireUser = originals.requireUser; shared.userState = originals.userState }
 })
 
 test('invalid JSON bodies and unexpected upstream failures still return structured API errors', async () => {

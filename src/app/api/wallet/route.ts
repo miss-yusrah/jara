@@ -1,10 +1,11 @@
 import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { requestKey } from '@/lib/money-request'
+import { run } from '@/lib/db'
 import { NextResponse } from 'next/server'
 import { syncJars, withUserLock } from '@/lib/jars'
 import { requireUser } from '@/lib/session'
 import { gdText, withdrawToWallet } from '@/lib/spend'
-import { getUserById, logActivity } from '@/lib/users'
+import { getUserById } from '@/lib/users'
 import { bad, userState } from '../_shared'
 
 export const dynamic = 'force-dynamic'
@@ -19,9 +20,12 @@ export async function POST(req: Request) {
   if (action === 'withdraw') {
     try {
       await withUserLock(user.id, async () => {
-        const r = await withdrawToWallet(user, requestKey(requestId))
+        const key = requestKey(requestId)
+        const r = await withdrawToWallet(user, key)
         if (!r) throw new Error('There’s no claimed G$ to move yet.')
-        await logActivity(user.id, { type: 'move', amountWei: r.amountWei.toString(), txHash: r.hash, title: `Sent ${gdText(r.amountWei)} to your wallet` })
+        await run(`INSERT OR IGNORE INTO activity (user_id, type, amount_wei, tx_hash, title, created_at, operation_id)
+          VALUES (?, 'move', ?, ?, ?, ?, ?)`,
+        [user.id, String(r.amountWei), r.hash, `Sent ${gdText(r.amountWei)} to your wallet`, Date.now(), `${user.id}:withdraw:${key}`])
         await syncJars(user)
       })
     } catch (err) {
