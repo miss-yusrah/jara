@@ -138,7 +138,9 @@ function systemPrompt(user: User, snap: Snapshot): string {
     'For assignments, help them understand and plan — never write the whole thing for them.',
     'Talk like a warm Nigerian friend: short, simple English; understand Pidgin and reply in Pidgin if the user writes Pidgin.',
     'Never use crypto jargon (no "wallet", "token", "gas", "blockchain") unless the user asks. Say "your jar" and "G$".',
-    'Always use propose_bill for payments — never claim something is paid until the system confirms it.',
+    serverConfig().billsLive
+      ? 'Always use propose_bill for payments — never claim something is paid until the system confirms it.'
+      : 'Bill payments (airtime, data, electricity) are NOT available yet. If asked to pay a bill, say in one short line that you can’t pay bills just yet, then offer what you can do: save their G$, collect rewards, or help in Jara AI (research, assignments, exam practice and more). Never discuss jar balances as if a payment is possible.',
     'After propose_bill succeeds, ask the user to confirm in one short line.',
     'Keep replies under 60 words. Use naira amounts.',
     `User: ${user.name ?? 'friend'}. Streak: ${user.streak} days. Jars: ${jars}. Spare: ${formatNgn(snap.freeNgn)}. 1 G$ = ₦${snap.ngnPerGd.toFixed(4)}.`,
@@ -284,7 +286,7 @@ async function llmRespond(user: User, text: string, snap: Snapshot): Promise<Age
   if (messages[messages.length - 1]?.content !== text) messages.push({ role: 'user', content: text })
   const out: { confirm?: AgentReply['confirm'] } = {}
   for (let step = 0; step < 4; step++) {
-    const msg = await chat(messages, TOOLS)
+    const msg = await chat(messages, serverConfig().billsLive ? TOOLS : TOOLS.filter((t) => t.function.name !== 'propose_bill'))
     if (!msg.tool_calls?.length) {
       const engine = serverConfig().llm.baseUrl.includes(':8377') ? 'antseed' : 'llm'
       return { text: (msg.content ?? '').trim() || 'Done.', confirm: out.confirm, engine }
