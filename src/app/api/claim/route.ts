@@ -12,7 +12,7 @@ export async function POST() {
   if (!user.connected) return bad('Connect your GoodDollar account first.')
   try {
     const r = await runDaily(user)
-    return NextResponse.json({ message: r.claimed > 0n ? r.message : 'Already claimed today — I will claim again tomorrow.', state: await userState((await getUserById(user.id))!) })
+    return NextResponse.json({ message: r.claimed > 0n || r.paid.length ? r.message : 'Already claimed today — I will claim again tomorrow.', state: await userState((await getUserById(user.id))!) })
   } catch (err) {
     console.error('[claim]', err)
     return bad('Claim failed. Please try again shortly.', 502)

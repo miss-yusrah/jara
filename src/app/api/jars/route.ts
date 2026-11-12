@@ -1,3 +1,4 @@
+import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { NextResponse } from 'next/server'
 import { isDisco, isMeterType, normalizeMeterNumber, normalizePhone, detectNetwork, isNetwork } from '@/lib/catalog'
 import { serverConfig, testNumbersAllowed } from '@/lib/env'
@@ -37,6 +38,7 @@ export async function POST(req: Request) {
     if (typeof body.amountGd !== 'string' || !/^\d{1,12}(\.\d{1,18})?$/.test(body.amountGd)) return bad('Enter a valid G$ amount.')
     try {
       await reallocateJar(user, body.from, body.kind, parseEther(body.amountGd), requestKey(body.requestId))
+      scheduleAutoPay(user.id)
       return NextResponse.json(await userState((await getUserById(user.id))!))
     } catch (err) { return bad(err instanceof Error ? err.message : 'Could not change budgets.') }
   }
@@ -60,5 +62,6 @@ export async function POST(req: Request) {
   const target = typeof body.targetNgn === 'number' && Number.isFinite(body.targetNgn) ? Math.min(Math.max(body.targetNgn, 0), serverConfig().limits.maxBillNgn) : undefined
   const every = body.everyDays === null ? null : typeof body.everyDays === 'number' && body.everyDays > 0 ? Math.min(Math.round(body.everyDays), 60) : undefined
   await updateJar(user.id, body.kind, { targetNgn: target, autoPay: typeof body.autoPay === 'boolean' ? body.autoPay : undefined, details, ...(every !== undefined ? { everyDays: every } : {}) })
+  scheduleAutoPay(user.id)
   return NextResponse.json(await userState((await getUserById(user.id))!))
 }

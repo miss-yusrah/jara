@@ -1,13 +1,13 @@
 import { formatEther, parseEther } from 'viem'
-import { describeAction, payBill, prepareBill } from './bills'
+import { checkAutoPay } from './auto-pay'
 import { GasLowError, claimUbi, sendGdFromTreasury } from './chain'
 import { atomic, run } from './db'
 import { gdForCeloFee } from './price'
 import { authorizedUser } from './wallet-authorization'
 import { spendMode } from './spend'
 import { serverConfig } from './env'
-import { getJars, snapshot, syncJars, withUserLock } from './jars'
-import { isBillKind, listConnectedUsers, logActivity, updateUser, type User } from './users'
+import { snapshot, syncJars, withUserLock } from './jars'
+import { listConnectedUsers, logActivity, updateUser, type User } from './users'
 import { decryptAgentKey } from './wallets'
 
 export function lagosDay(offsetDays = 0): string {
@@ -92,20 +92,11 @@ export async function runDaily(user: User, _opts: { force?: boolean } = {}): Pro
       await syncJars(user)
     })
 
-    // Auto-pay jars that reached their target.
     const paid: string[] = []
-    for (const jar of await getJars(user.id)) {
-      // Jars with a known cadence are paid on their due date by the agent routine instead.
-      if (!serverConfig().billsLive || !isBillKind(jar.kind) || !jar.autoPay || jar.everyDays) continue
-      const view = (await snapshot(user)).jars.find((j) => j.kind === jar.kind)!
-      if (view.balanceNgn < jar.targetNgn || jar.targetNgn <= 0) continue
-      const prepared = await prepareBill(user, { kind: jar.kind, amountNgn: jar.targetNgn })
-      if ('error' in prepared) continue
-      prepared.action.id = `auto:${jar.kind}:${today}`
-      const res = await payBill(user, prepared.action)
-      if (res.ok && !res.pending) {
-        paid.push(describeAction(prepared.action))
-        lines.push(res.message)
+    for (const payment of await checkAutoPay(user)) {
+      if (payment.result.ok && !payment.result.pending) {
+        paid.push(`${payment.description}${payment.result.token ? ` · token ${payment.result.token}` : ''}`)
+        lines.push(payment.result.message)
       }
     }
 

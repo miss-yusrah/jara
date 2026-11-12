@@ -1,3 +1,4 @@
+import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { NextResponse } from 'next/server'
 import { formatEther, isHash } from 'viem'
 import { gdReceivedIn } from '@/lib/chain'
@@ -36,5 +37,6 @@ export async function POST(req: Request) {
     // Also picks up G$ sent to the jar address any other way.
     await syncJars(user)
   })
+  scheduleAutoPay(user.id)
   return NextResponse.json(await userState((await getUserById(user.id))!))
 }

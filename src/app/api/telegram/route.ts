@@ -1,3 +1,4 @@
+import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { handleMessage, resolvePending } from '@/lib/agent'
@@ -46,6 +47,7 @@ async function handle(update: Update) {
     await editKeyboard(chatId, cb.message.message_id)
     await sendTyping(chatId)
     const reply = await resolvePending(user.id, cb.data?.startsWith('confirm:') ?? false, cb.data?.split(':')[1])
+    scheduleAutoPay(user.id)
     await run('INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)', [user.id, 'assistant', reply.text, Date.now()])
     await sendMessage(chatId, reply.text + (reply.explorerUrl ? `\n\nReceipt: ${reply.explorerUrl}` : ''))
     return
@@ -96,6 +98,7 @@ async function handle(update: Update) {
   if (!text) return
   await sendTyping(chatId)
   const reply = await handleMessage(user.id, text, `telegram:${chatId}:${msg.message_id}`)
+  scheduleAutoPay(user.id)
   await sendMessage(chatId, reply.text, reply.confirm ? CONFIRM_KEYBOARD(reply.confirm.id) : undefined)
   for (const m of reply.extra ?? []) await sendMessage(chatId, m)
 }

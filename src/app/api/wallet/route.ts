@@ -1,3 +1,4 @@
+import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { requestKey } from '@/lib/money-request'
 import { NextResponse } from 'next/server'
 import { syncJars, withUserLock } from '@/lib/jars'
@@ -31,5 +32,6 @@ export async function POST(req: Request) {
   } else {
     return bad('Unknown action')
   }
+  scheduleAutoPay(user.id)
   return NextResponse.json(await userState((await getUserById(user.id))!))
 }

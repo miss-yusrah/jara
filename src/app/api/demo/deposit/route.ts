@@ -1,3 +1,4 @@
+import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { NextResponse } from 'next/server'
 import { parseEther } from 'viem'
 import { mockDeposit } from '@/lib/chain'
@@ -28,5 +29,6 @@ export async function POST(req: Request) {
     await logActivity(user.id, { type: 'deposit', amountWei: parseEther(String(gd)).toString(), title: `Deposited G$ ${gd.toLocaleString()}` })
     await syncJars(user)
   }
+  scheduleAutoPay(user.id)
   return NextResponse.json(await userState((await getUserById(user.id))!))
 }

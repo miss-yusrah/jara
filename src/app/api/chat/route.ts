@@ -1,3 +1,4 @@
+import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { requestKey } from '@/lib/money-request'
 import { NextResponse } from 'next/server'
 import { handleMessage, listMessages, resolvePending } from '@/lib/agent'
@@ -34,6 +35,7 @@ async function post(req: Request) {
     if (!text) return bad('Say something')
     reply = await handleMessage(user.id, text, requestId)
   }
+  scheduleAutoPay(user.id)
   // New clients display the reply immediately, then refresh balances separately.
   if (body.response === 'compact') return NextResponse.json({ reply, messages: await listMessages(user.id) })
   return NextResponse.json({ reply, state: await userState((await getUserById(user.id))!) })

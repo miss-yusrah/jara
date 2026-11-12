@@ -21,6 +21,9 @@ const { directIntent } = require('../src/lib/agent/fallback.ts')
 const { ApiError, readApiResponse } = require('../src/lib/api-response.ts')
 const billRoute = require('../src/app/api/bills/route.ts')
 const chatRoute = require('../src/app/api/chat/route.ts')
+// These route unit tests have no Next request lifecycle. Auto-pay integration
+// tests exercise the queued work separately; it must not block these replies.
+require('../src/lib/auto-pay-after.ts').scheduleAutoPay = () => {}
 const { FalconPayProvider } = require('../src/lib/providers/falconpay.ts')
 const post = (path, body) => new Request(`http://localhost${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 

@@ -170,11 +170,13 @@ export function AppClient({ tgCode, refCode }: { tgCode?: string; refCode?: stri
     })().catch(() => setState(null))
   }, [tgCode, flash])
 
-  // While a bill is still processing, keep checking so "Paying…" flips to "Paid" by itself.
+  // Show background auto-pay starts and late provider confirmations without a reload.
   const hasPending = Boolean(state?.activity.some((a) => a.type === 'pay' && ['pending', 'refund_pending', 'settling'].includes(a.status)))
+  const hasAutoPay = Boolean(state?.snapshot.jars.some((jar) => jar.kind !== 'ai' && jar.autoPay))
   useEffect(() => {
-    if (!hasPending) return
+    if (!hasPending && !hasAutoPay) return
     const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return
       api<State | { user: null }>('/api/session')
         .then((s) => {
           if (s.user) setState(s as State)
@@ -182,7 +184,7 @@ export function AppClient({ tgCode, refCode }: { tgCode?: string; refCode?: stri
         .catch(() => {})
     }, 20_000)
     return () => window.clearInterval(id)
-  }, [hasPending])
+  }, [hasPending, hasAutoPay])
 
   return (
     <div className="jara-app min-h-dvh">
@@ -2151,13 +2153,13 @@ function JarSheet({ jar, onClose, onSave }: { jar: JarView; onClose: () => void;
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-xs font-semibold text-ink/50">Jara tops this jar up before it’s due and pays on time.</p>
+            <p className="mt-1.5 text-xs font-semibold text-ink/50">{every ? 'Jara tops this jar up before it’s due and checks for payment every minute once due.' : 'Payment starts after a claim, deposit or budget move fills this jar. Other incoming funds are checked every minute. Delivery may take longer.'}</p>
           </div>
 
           <button onClick={() => setAutoPay(!autoPay)} className="flex w-full items-center justify-between rounded-2xl bg-white px-4 py-3 text-left ring-1 ring-ink/10">
             <span>
               <span className="block text-sm font-semibold">Pay automatically</span>
-              <span className="text-sm font-semibold text-ink/55">{every ? `Every ${every} days, ${formatNgn(target)}` : `When the jar reaches ${formatNgn(target)}`}</span>
+              <span className="text-sm font-semibold text-ink/55">{every ? `Every ${every} days, ${formatNgn(target)}` : `At ${formatNgn(target)}, at most once per day`}</span>
             </span>
             <span className={`relative h-7 w-12 shrink-0 rounded-full transition ${autoPay ? 'bg-forest' : 'bg-ink/15'}`}>
               <span className={`absolute top-1 h-5 w-5 rounded-full bg-cream shadow transition-all ${autoPay ? 'left-6' : 'left-1'}`} />

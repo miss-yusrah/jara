@@ -99,16 +99,18 @@ export async function updateJar(
   kind: JarKind,
   patch: Partial<{ targetNgn: number; autoPay: boolean; details: JarDetails; everyDays: number | null }>,
 ) {
-  const jar = (await getJars(userId)).find((j) => j.kind === kind)!
-  const every = 'everyDays' in patch ? patch.everyDays : jar.everyDays
-  await run('UPDATE jars SET target_ngn = ?, auto_pay = ?, details = ?, every_days = ? WHERE user_id = ? AND kind = ?', [
-    Math.max(0, Math.round(patch.targetNgn ?? jar.targetNgn)),
-    (patch.autoPay ?? jar.autoPay) ? 1 : 0,
-    JSON.stringify({ ...jar.details, ...(patch.details ?? {}) }),
-    every && every > 0 ? Math.round(every) : null,
-    userId,
-    kind,
-  ])
+  return withUserLock(userId, async () => {
+    const jar = (await getJars(userId)).find((j) => j.kind === kind)!
+    const every = 'everyDays' in patch ? patch.everyDays : jar.everyDays
+    await run('UPDATE jars SET target_ngn = ?, auto_pay = ?, details = ?, every_days = ? WHERE user_id = ? AND kind = ?', [
+      Math.max(0, Math.round(patch.targetNgn ?? jar.targetNgn)),
+      (patch.autoPay ?? jar.autoPay) ? 1 : 0,
+      JSON.stringify({ ...jar.details, ...(patch.details ?? {}) }),
+      every && every > 0 ? Math.round(every) : null,
+      userId,
+      kind,
+    ])
+  })
 }
 
 export async function markJarPaid(userId: string, kind: JarKind) {

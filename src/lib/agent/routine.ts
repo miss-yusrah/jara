@@ -1,6 +1,6 @@
 import { serverConfig } from '../env'
 import { formatEther } from 'viem'
-import { describeAction, payBill, prepareBill } from '../bills'
+import { checkAutoPay } from '../auto-pay'
 import { formatNgn } from '../catalog'
 import { runDaily } from '../daily'
 import { AI_TOOLS } from '../ai-tools'
@@ -33,7 +33,7 @@ export async function runAgent(
     let user = (await getUserById(userId))!
     const steps: AgentStep[] = []
 
-    // SAVE (+ pay-when-full for jars without a cadence)
+    // SAVE (+ any eligible auto-pay bills)
     const daily = await runDaily(user, opts)
     if (daily.claimed > 0n) steps.push({ lane: 'save', text: `Claimed G$ ${Number(formatEther(daily.claimed)).toLocaleString('en-US', { maximumFractionDigits: 0 })} and shared it across your jars` })
     if (daily.reward > 0n) steps.push({ lane: 'rewards', text: `${daily.streak}-day streak bonus collected` })
@@ -43,7 +43,6 @@ export async function runAgent(
     user = (await getUserById(userId))!
     for (const jar of serverConfig().billsLive ? await getJars(user.id) : []) {
       if (!isBillKind(jar.kind) || !jar.everyDays) continue
-      const kind = jar.kind
       const due = jarDueAt(jar)
       const view = (await snapshot(user)).jars.find((j) => j.kind === jar.kind)!
       const label = JAR_INFO[jar.kind].label
@@ -54,26 +53,16 @@ export async function runAgent(
         if (movedGd > 0) steps.push({ lane: 'pay', text: `${label} is due ${due ? 'soon' : 'now'} — moved G$ ${Math.round(movedGd).toLocaleString()} into it` })
         else steps.push({ lane: 'pay', text: `${label} is due soon but your jars are short. I’ll keep saving.` })
       }
-
-      const payNow = due === null || due <= Date.now()
-      if (jar.autoPay && payNow) {
-        const fresh = (await snapshot(user)).jars.find((j) => j.kind === jar.kind)!
-        if (fresh.balanceNgn >= jar.targetNgn && jar.targetNgn > 0) {
-          const prepared = await prepareBill(user, { kind, amountNgn: jar.targetNgn })
-          if ('error' in prepared) {
-            steps.push({ lane: 'pay', text: `Couldn’t pay ${label}: ${prepared.error}` })
-          } else {
-            prepared.action.id = `auto:${jar.kind}:${jar.lastPaidAt ?? 0}`
-            const res = await payBill(user, prepared.action)
-            steps.push({ lane: 'pay', text: res.ok && !res.pending ? `Paid ${describeAction(prepared.action)}${res.token ? ` · token ${res.token}` : ''}` : `${label}: ${res.message}` })
-          }
-        }
-      }
     }
 
     // REWARDS
     user = (await getUserById(userId))!
     for (const r of await collectRewards(user)) steps.push({ lane: 'rewards', text: `Found a reward: ${r.title} (+G$ ${r.amountGd.toLocaleString()})` })
+
+    // Due-soon top-ups and rewards can also fill a jar.
+    for (const payment of await checkAutoPay(user)) {
+      steps.push({ lane: 'pay', text: payment.result.ok && !payment.result.pending ? `Paid ${payment.description}${payment.result.token ? ` · token ${payment.result.token}` : ''}` : payment.result.message })
+    }
 
     // AI: tell the user what their AI jar can now pay for (only when today's claim topped it up)
     if (daily.claimed > 0n) {
