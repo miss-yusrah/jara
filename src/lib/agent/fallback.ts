@@ -2,7 +2,7 @@
 // phrases (English + common Pidgin) so the agent never goes silent.
 
 export type Intent =
-  | { type: 'bill'; kind: 'airtime' | 'data' | 'light'; amountNgn?: number; phone?: string; plan?: string }
+  | { type: 'bill'; kind: 'airtime' | 'data' | 'light'; amountNgn?: number; phone?: string; plan?: string; network?: string }
   | { type: 'balance' }
   | { type: 'claim' }
   | { type: 'move'; jar: 'airtime' | 'data' | 'light'; amountNgn: number }
@@ -10,6 +10,19 @@ export type Intent =
   | { type: 'rewards' }
   | { type: 'run' }
   | { type: 'help' }
+
+/** Only complete, unambiguous requests bypass the model. Never infer consent
+ * from a mention of airtime, a conditional, or a negated instruction. */
+export function directIntent(raw: string): Intent | null {
+  const text = raw.trim().replace(/[’]/g, "'")
+  if (/^(?:my balance|balance|check my balance|what(?:'s| is) in my jars|my jars|wetin dey my jars)[?!.]*$/i.test(text)) return { type: 'balance' }
+  if (/^(?:my rewards|show my rewards|rewards)[?!.]*$/i.test(text)) return { type: 'rewards' }
+  const match = text.match(/^(?:please\s+)?(?:(?:buy|send|recharge|pay(?:\s+for)?)\s+)?(?:₦|ngn\s*|n)?([\d,]+(?:\.\d+)?)\s*(k)?\s+(?:(mtn|airtel|glo|9mobile)\s+)?airtime(?:\s+(?:for\s+me|(?:to|for)\s+((?:\+?234|0)[\d\s-]{9,15})))?[.!]?$/i)
+  if (!match) return null
+  const value = Number(match[1].replace(/,/g, '')) * (match[2] ? 1000 : 1)
+  if (!Number.isFinite(value) || value < 50) return null
+  return { type: 'bill', kind: 'airtime', amountNgn: value, network: match[3]?.toLowerCase(), phone: match[4]?.trim() }
+}
 
 function amount(text: string): number | undefined {
   const m = text.replace(/,/g, '').match(/(?:₦|n|ngn\s?)?(\d+(?:\.\d+)?)\s*(k)?\b(?!\s*(?:gb|mb))/i)

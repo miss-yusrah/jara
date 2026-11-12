@@ -1,4 +1,5 @@
 import { withUserLock } from '@/lib/jars'
+import { apiFailure } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 import { formatEther } from 'viem'
 import { resolvePending } from '@/lib/agent'
@@ -32,13 +33,18 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  try { return await post(req) } catch (err) { return apiFailure(err, 'bills') }
+}
+
+async function post(req: Request) {
   const user = await requireUser()
   if (user instanceof NextResponse) return user
   if (!rateLimit(`bills:${user.id}`, 20, 10 * 60_000) || !rateLimit(`bills-ip:${clientIp(req)}`, 60, 10 * 60_000)) {
     return NextResponse.json({ error: 'Too many tries — wait a few minutes.' }, { status: 429 })
   }
   if (!user.connected) return bad('Connect your GoodDollar account first.')
-  const body = (await req.json().catch(() => ({}))) as {
+  const body = (await req.json().catch(() => null)) as {
+    response?: string
     actionId?: string
     action?: 'prepare' | 'confirm' | 'cancel'
     kind?: string
@@ -46,11 +52,13 @@ export async function POST(req: Request) {
     phone?: string
     network?: string
     planCode?: string
-  }
+  } | null
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return bad('Invalid bill request.')
 
   if (body.action === 'confirm' || body.action === 'cancel') {
     if (!body.actionId) return bad('Review this bill again before confirming.')
     const reply = await resolvePending(user.id, body.action === 'confirm', body.actionId)
+    if (body.response === 'compact') return NextResponse.json({ reply })
     return NextResponse.json({ reply, state: await userState((await getUserById(user.id))!) })
   }
 

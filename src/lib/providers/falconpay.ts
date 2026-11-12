@@ -212,7 +212,9 @@ export class FalconPayProvider implements TopupProvider {
 
     let res: { status: number; json: FalconResponse<BillData> }
     try {
-      res = await this.request<BillData>('POST', '/api/bills/pay', body, 60_000)
+      // A slow provider remains pending under this reference; status checks and
+      // webhooks finish it without holding the browser open for a full minute.
+      res = await this.request<BillData>('POST', '/api/bills/pay', body, 15_000)
     } catch (err) {
       // Timeout or transport error after sending: it may still go through. Check status later.
       console.error('[falconpay] /bills/pay transport error', reference, err)

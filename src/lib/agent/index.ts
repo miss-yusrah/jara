@@ -5,11 +5,11 @@ import { describeAction, payBill, prepareBill } from '../bills'
 import { DISCO_INFO, formatNgn, isDisco, isNetwork, normalizePhone, detectNetwork } from '../catalog'
 import { run } from '../db'
 import { serverConfig } from '../env'
-import { moveToJar, snapshot, syncJars, updateJar, withUserLock, type Snapshot } from '../jars'
+import { moveToJar, snapshot, updateJar, withUserLock, type Snapshot } from '../jars'
 import { runDaily } from '../daily'
 import { getUserById, isBillKind, isJarKind, listActivity, updateUser, type JarKind, type PendingAction, type User } from '../users'
 import { chat, llmReachable, type ChatMessage, type ToolDef } from './llm'
-import { fallbackIntent } from './fallback'
+import { directIntent, fallbackIntent, type Intent } from './fallback'
 import { runAgent } from './routine'
 import { AI_TOOLS, isAiTool, runAiTool } from '../ai-tools'
 import { rewardProgress } from '../rewards'
@@ -201,6 +201,11 @@ export async function listMessages(userId: string) {
 
 async function propose(user: User, args: Record<string, unknown>): Promise<{ text: string; confirm?: AgentReply['confirm'] }> {
   if (!isBillKind(args.kind)) return { text: 'error: kind must be airtime, data or light' }
+  const fresh = (await getUserById(user.id))!
+  if (fresh.pending?.id) {
+    const active = (await run('SELECT result FROM money_requests WHERE id = ?', [`${user.id}:bill:${fresh.pending.id}`])).rows[0]
+    if (active && !active.result) return { text: 'error: Your previous bill is still processing. Wait for its result before starting another.' }
+  }
   const prepared = await prepareBill(user, {
     kind: args.kind,
     amountNgn: Number(args.amount_ngn ?? (args.kind === 'data' ? 20_000 : 0)),
@@ -401,10 +406,16 @@ async function respond(user: User, text: string): Promise<AgentReply> {
   if (user.pending && YES.test(text)) return resolvePending(user.id, true)
   if (user.pending && NO.test(text)) return resolvePending(user.id, false)
 
-  await syncJars(user).catch((err) => console.warn('[agent] sync failed', err))
-  const snap = await snapshot(user)
+  if (/^(?:hi|hello|hey|good morning|good afternoon|good evening)(?:\s+jara)?[!.]*$/i.test(text)) {
+    return { text: `Hi${user.name ? ` ${user.name}` : ''}! How can I help you today?`, engine: 'rules' }
+  }
+  const direct = directIntent(text)
+  if (direct) return rulesRespond(user, text, undefined, direct)
 
-  if (!(await llmReachable())) return rulesRespond(user, text, snap)
+  if (!(await llmReachable())) return rulesRespond(user, text)
+  // Displaying context needs one fresh read. Payment tools still synchronize
+  // and validate balances themselves immediately before reserving any money.
+  const snap = await snapshot(user)
   try {
     return await llmRespond(user, text, snap)
   } catch (err) {
@@ -417,41 +428,75 @@ async function llmRespond(user: User, text: string, snap: Snapshot): Promise<Age
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(user, snap) }, ...(await history(user.id))]
   if (messages[messages.length - 1]?.content !== text) messages.push({ role: 'user', content: text })
   const out: ToolOut = {}
+  const results: string[] = []
+  let remainingMs = 25_000
+  const engine = serverConfig().llm.baseUrl.includes(':8377') ? 'antseed' : 'llm'
   for (let step = 0; step < 4; step++) {
-    const msg = await chat(messages, serverConfig().billsLive ? TOOLS : TOOLS.filter((t) => t.function.name !== 'propose_bill'))
+    const started = Date.now()
+    let msg: ChatMessage
+    try {
+      if (remainingMs <= 0) throw new Error('Chat time budget reached')
+      msg = await chat(messages, serverConfig().billsLive ? TOOLS : TOOLS.filter((t) => t.function.name !== 'propose_bill'), 600, { think: false, timeoutMs: Math.min(12_000, remainingMs) })
+    } catch (err) {
+      // A tool may already have changed a jar or started a paid job. Return its
+      // recorded result instead of executing a fallback action a second time.
+      if (results.length) return { text: results.join('\n\n'), confirm: out.confirm, extra: out.extra, engine }
+      throw err
+    } finally { remainingMs -= Date.now() - started }
     if (!msg.tool_calls?.length) {
-      const engine = serverConfig().llm.baseUrl.includes(':8377') ? 'antseed' : 'llm'
-      return { text: (msg.content ?? '').trim() || 'Done.', confirm: out.confirm, extra: out.extra, engine }
+      return { text: (msg.content ?? '').trim() || results.join('\n\n') || 'Please try asking that again.', confirm: out.confirm, extra: out.extra, engine }
     }
     messages.push({ role: 'assistant', content: msg.content ?? null, tool_calls: msg.tool_calls })
     for (const call of msg.tool_calls) {
       let args: Record<string, unknown> = {}
       try {
         args = JSON.parse(call.function.arguments || '{}')
+        if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Invalid tool arguments')
       } catch {
-        /* bad JSON from model: run with no args */
+        messages.push({ role: 'tool', tool_call_id: call.id, content: 'error: Invalid arguments. Return valid JSON arguments before running this tool.' })
+        continue
       }
       const result = await executeTool(user, call.function.name, args, out)
+      results.push(summarizeTool(call.function.name, result))
       messages.push({ role: 'tool', tool_call_id: call.id, content: result })
     }
+    if (out.confirm) return { text: `I'll pay ${out.confirm.summary} with G$ ${out.confirm.gd} from your jar. Confirm?`, confirm: out.confirm, extra: out.extra, engine }
+    // Paid helper output is already the answer, not input for another AI rewrite.
+    if (msg.tool_calls.some((call) => call.function.name === 'use_ai_helper')) return { text: results.join('\n\n'), extra: out.extra, engine }
   }
-  return { text: 'Sorry, I got confused. Try saying it another way?', confirm: out.confirm, extra: out.extra, engine: 'llm' }
+  return { text: results.join('\n\n') || 'Please try asking that again.', confirm: out.confirm, extra: out.extra, engine }
 }
 
-async function rulesRespond(user: User, text: string, snap: Snapshot): Promise<AgentReply> {
-  const intent = fallbackIntent(text)
+function summarizeTool(name: string, result: string): string {
+  if (name === 'get_jars') {
+    const snap = JSON.parse(result) as Snapshot
+    return [...snap.jars.map((j) => `${j.label}: ${formatNgn(j.balanceNgn)}`), `Spare: ${formatNgn(snap.freeNgn)}`].join('\n')
+  }
+  if (name === 'ai_helpers') return Object.values(AI_TOOLS).map((t) => `${t.name} — G$ ${t.priceGd}`).join('\n')
+  if (name === 'my_rewards') {
+    const progress = JSON.parse(result) as Awaited<ReturnType<typeof rewardProgress>>
+    return `You've earned G$ ${progress.earnedGd.toLocaleString()} in rewards.\n${progress.items.filter((i) => !i.done).map((i) => `${i.title}: ${i.detail}`).join('\n')}`
+  }
+  if (name === 'recent_activity') return (JSON.parse(result) as { title: string; status: string }[]).map((a) => `${a.title} (${a.status})`).join('\n') || 'No recent activity yet.'
+  return result.replace(/^error: /, '')
+}
+
+async function rulesRespond(user: User, text: string, snap?: Snapshot, parsed?: Intent): Promise<AgentReply> {
+  const intent = parsed ?? fallbackIntent(text)
   const out: { confirm?: AgentReply['confirm'] } = {}
   switch (intent.type) {
     case 'bill': {
-      const r = await propose(user, { kind: intent.kind, amount_ngn: intent.amountNgn, phone: intent.phone, plan: intent.plan })
+      const r = await propose(user, { kind: intent.kind, amount_ngn: intent.amountNgn, phone: intent.phone, network: intent.network, plan: intent.plan })
       if (r.confirm) return { text: `I'll pay ${r.confirm.summary} with G$ ${r.confirm.gd} from your jar. Confirm?`, confirm: r.confirm, engine: 'rules' }
       return { text: r.text.replace(/^error: /, ''), engine: 'rules' }
     }
-    case 'balance':
+    case 'balance': {
+      const current = snap ?? await snapshot(user)
       return {
-        text: [...snap.jars.map((j) => `${j.emoji} ${j.label}: ${formatNgn(j.balanceNgn)} / ${formatNgn(j.targetNgn)} (${j.pct}%)`), `Spare: ${formatNgn(snap.freeNgn)}`].join('\n'),
+        text: [...current.jars.map((j) => `${j.emoji} ${j.label}: ${formatNgn(j.balanceNgn)} / ${formatNgn(j.targetNgn)} (${j.pct}%)`), `Spare: ${formatNgn(current.freeNgn)}`].join('\n'),
         engine: 'rules',
       }
+    }
     case 'claim': {
       const t = await executeTool(user, 'claim_now', {}, out)
       return { text: t.replace(/^error: /, ''), engine: 'rules' }
@@ -473,7 +518,7 @@ async function rulesRespond(user: User, text: string, snap: Snapshot): Promise<A
       return { text: t.startsWith('error') ? "There's no spare G$ to move right now." : `Done — ${t.replace('moved', 'moved')} into ${intent.jar}.`, engine: 'rules' }
     }
     default: {
-      const light = snap.jars.find((j) => j.kind === 'light')
+      const light = snap?.jars.find((j) => j.kind === 'light')
       const disco = light && isDisco(light.details.disco) ? ` (${DISCO_INFO[light.details.disco].short})` : ''
       return {
         text: `I save your G$, pay airtime, data and light${disco}, find rewards, and your G$ pays for AI help (research, assignments, brainstorming). Try:\n• "₦500 airtime to 0803 123 4567"\n• "1GB data for me"\n• "Buy ₦3000 light"\n• "Help me research inflation"\n• "My rewards"`,

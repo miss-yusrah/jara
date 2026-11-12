@@ -3,6 +3,13 @@ import { db, moneyLockContext } from './db'
 
 const LEASE_MS = 120_000
 
+export class MoneyBusyError extends Error {
+  constructor() {
+    super('Another operation is still processing. Retry the same request shortly.')
+    this.name = 'MoneyBusyError'
+  }
+}
+
 /**
  * Shared across server processes; nested calls for the same user are safe.
  * `waitMs` queues behind the current holder for that long (used for the shared
@@ -21,7 +28,7 @@ export async function withMoneyLock<T>(id: string, fn: () => Promise<T>, opts: {
       args: [id, owner, Date.now() + LEASE_MS, Date.now()],
     })
     if (acquired.rowsAffected) break
-    if (Date.now() >= deadline) throw new Error('Another operation is still processing. Retry the same request shortly.')
+    if (Date.now() >= deadline) throw new MoneyBusyError()
     await new Promise((r) => setTimeout(r, 400 + Math.random() * 300))
   }
   const heartbeat = setInterval(() => {

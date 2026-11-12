@@ -27,7 +27,7 @@ export interface ToolDef {
  * `think: false` turns off the model's hidden reasoning for simple tasks (picking from a list),
  * so the whole token budget goes to the answer. Only sent to DeepSeek models, which support it.
  */
-export async function chat(messages: ChatMessage[], tools: ToolDef[], maxTokens = 600, opts: { think?: boolean } = {}): Promise<ChatMessage> {
+export async function chat(messages: ChatMessage[], tools: ToolDef[], maxTokens = 600, opts: { think?: boolean; timeoutMs?: number } = {}): Promise<ChatMessage> {
   const cfg = serverConfig().llm
   if (cfg.disabled) throw new Error('LLM disabled')
   const headers: Record<string, string> = {
@@ -49,7 +49,7 @@ export async function chat(messages: ChatMessage[], tools: ToolDef[], maxTokens 
       temperature: 0.3,
       max_tokens: maxTokens,
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
   })
   if (!res.ok) throw new Error(`LLM HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
   const json = (await res.json()) as { choices?: { message?: ChatMessage }[] }
@@ -89,7 +89,9 @@ export async function* chatStream(messages: ChatMessage[], maxTokens = 1500): As
   const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model: cfg.model, messages, stream: true, temperature: 0.4, max_tokens: maxTokens }),
+    body: JSON.stringify({ model: cfg.model, messages, stream: true, temperature: 0.4, max_tokens: maxTokens,
+      ...(/deepseek/i.test(cfg.model) ? { thinking: { type: 'disabled' } } : {}),
+    }),
     signal: AbortSignal.timeout(180_000),
   })
   if (!res.ok || !res.body) throw new Error(`LLM HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`)

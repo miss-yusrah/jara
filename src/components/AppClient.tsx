@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { clientRequest } from '@/lib/client-request'
+import { ApiError, readApiResponse } from '@/lib/api-response'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPublicClient, createWalletClient, custom, http, parseEther, type EIP1193Provider } from 'viem'
 import { celo } from 'viem/chains'
@@ -109,17 +110,10 @@ async function api<T>(path: string, body?: unknown, method?: 'DELETE'): Promise<
     method: method ?? (body === undefined ? 'GET' : 'POST'),
     headers: { 'content-type': 'application/json' },
     body: payload === undefined ? undefined : JSON.stringify(payload),
-  })
-  const json = await res.json()
-  if (!res.ok) throw new ApiError(json.error ?? 'Something went wrong', json.code)
+  }).catch(() => { throw new ApiError('The connection was interrupted. Please retry this same request to check its result.', 'network', 0, true) })
+  const json = await readApiResponse<T>(res)
   saved?.finish()
-  return json as T
-}
-
-class ApiError extends Error {
-  constructor(message: string, readonly code?: string) {
-    super(message)
-  }
+  return json
 }
 
 /** Prove a wallet is yours with one free signature and open its Jara account. */
@@ -1911,17 +1905,18 @@ function PayBillSheet({
 
   const decide = (confirm: boolean) =>
     act(confirm ? 'pay' : 'cancel', async () => {
-      const send = () => api<{ reply: { text: string }; state: State }>('/api/bills', { action: confirm ? 'confirm' : 'cancel', actionId: review?.id })
-      let r: { reply: { text: string }; state: State }
+      const send = () => api<{ reply: { text: string } }>('/api/bills', { action: confirm ? 'confirm' : 'cancel', actionId: review?.id, response: 'compact' })
+      let r: { reply: { text: string } }
       try {
         r = await send()
       } catch (err) {
-        if (!confirm) throw err
+        if (!confirm || !(err instanceof ApiError) || !err.retryable) throw err
         // Paying can take a while on-chain; if the connection dropped, ask what happened instead of guessing.
         await new Promise((ok) => setTimeout(ok, 4000))
         r = await send()
       }
-      setState(r.state)
+      // A balance/RPC outage must not hide a completed payment response.
+      void api<State | { user: null }>('/api/session').then((s) => { if (s.user) setState(s as State) }).catch(() => {})
       if (!confirm) {
         setReview(null)
         return
@@ -2256,24 +2251,33 @@ function Chat({ state, setState, flash }: { state: State; setState: (s: State) =
   const [sending, setSending] = useState(false)
   const [confirm, setConfirm] = useState<{ id: string; summary: string; gd: number } | null>(state.user.hasPending ? { id: state.user.pendingId ?? '', summary: 'Your last request', gd: 0 } : null)
   const [optimistic, setOptimistic] = useState<string | null>(null)
+  const [received, setReceived] = useState<Msg[]>([])
+  const sendingRef = useRef(false)
+  const messages = [...new Map([...state.messages, ...received].map((m) => [m.id, m])).values()].sort((a, b) => a.id - b.id).slice(-60)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-  }, [state.messages.length, optimistic, sending, confirm])
+  }, [messages.length, optimistic, sending, confirm])
 
   const send = async (body: { text?: string; confirm?: boolean }) => {
+    if (sendingRef.current) return
+    sendingRef.current = true
     setSending(true)
     if (body.text) setOptimistic(body.text)
     if (body.confirm !== undefined) setConfirm(null)
     try {
-      const r = await api<{ reply: { text: string; confirm?: { id: string; summary: string; gd: number } }; state: State }>('/api/chat', { ...body, ...(body.confirm !== undefined ? { actionId: confirm?.id } : {}) })
-      setState(r.state)
+      const r = await api<{ reply: { text: string; confirm?: { id: string; summary: string; gd: number } }; messages: Msg[] }>('/api/chat', { ...body, response: 'compact', ...(body.confirm !== undefined ? { actionId: confirm?.id } : {}) })
+      setReceived(r.messages)
       setConfirm(r.reply.confirm ?? null)
+      void api<State | { user: null }>('/api/session').then((s) => { if (s.user) setState(s as State) }).catch(() => {})
     } catch (err) {
+      if (body.confirm !== undefined) setConfirm(confirm)
+      if (body.text) setText(body.text)
       flash(err instanceof Error ? err.message : 'Could not send')
     } finally {
+      sendingRef.current = false
       setOptimistic(null)
       setSending(false)
     }
@@ -2295,13 +2299,13 @@ function Chat({ state, setState, flash }: { state: State; setState: (s: State) =
       </div>
 
       <div ref={scrollRef} className="flex-1 space-y-2.5 overflow-y-auto bg-cream/60 px-4 py-5">
-        {state.messages.length === 0 && !optimistic && (
+        {messages.length === 0 && !optimistic && (
           <ChatBubble
             me={false}
             text={`Hi${state.user.name ? ` ${state.user.name}` : ''}! I’m your AI agent. ${state.config.billsLive ? 'I save your G$, pay your bills, find you rewards — and your G$ pays for AI help with research, assignments and ideas. Ask me anything — I’ll always show you before I pay.' : 'I save your G$, find you rewards, and your G$ pays for Jara AI: research, assignments, exam practice and more. Ask me anything.'}`}
           />
         )}
-        {state.messages.map((m) => (
+        {messages.map((m) => (
           <ChatBubble key={m.id} me={m.role === 'user'} text={m.content} />
         ))}
         {optimistic && <ChatBubble me text={optimistic} />}

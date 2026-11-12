@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
+import { apiFailure } from '@/lib/api-error'
 import { SESSION_COOKIE, currentUser, setSessionCookie } from '@/lib/session'
 import { settlePendingBills } from '@/lib/bills'
 import { createUser, getUserById, getUserByLinkCode, getUserByRefCode, rotateLinkCode } from '@/lib/users'
@@ -9,13 +10,19 @@ import { recoverUserPayments } from '@/lib/money-recovery'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  try { return await get() } catch (err) { return apiFailure(err, 'session') }
+}
+
+async function get() {
   const user = await currentUser()
   if (!user) return NextResponse.json({ user: null })
   // Bills still "processing" (e.g. FalconPay answered slowly): re-check them now instead of
   // waiting for the webhook or the scheduled run. At most every 20s per person.
   if (rateLimit(`settle:${user.id}`, 1, 20_000)) {
-    await recoverUserPayments(user).catch((err) => console.warn('[session] payment recovery', err))
-    await settlePendingBills(undefined, user.id).catch((err) => console.warn('[session] settle failed', err))
+    after(async () => {
+      await recoverUserPayments(user).catch((err) => console.warn('[session] payment recovery', err instanceof Error ? err.name : 'UnknownError'))
+      await settlePendingBills(undefined, user.id).catch((err) => console.warn('[session] settle failed', err instanceof Error ? err.name : 'UnknownError'))
+    })
   }
   return NextResponse.json(await userState((await getUserById(user.id)) ?? user))
 }
