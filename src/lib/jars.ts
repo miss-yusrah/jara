@@ -2,7 +2,7 @@ import { formatEther } from 'viem'
 import { gasStatus, gdBalance } from './chain'
 import { spendableWei, spendingPower } from './spend'
 import { atomic, run } from './db'
-import { withMoneyLock } from './money-lock'
+import { hasPendingFunds, withAccountLock } from './account-lock'
 import { moneyRequest } from './money-request'
 import { gdForNgn, ngnPerGd } from './price'
 import { JAR_INFO, JAR_KINDS, type JarKind, type User } from './users'
@@ -68,7 +68,7 @@ export interface Snapshot {
 }
 
 // Database-backed lock also covers other workers and survives process restarts.
-export const withUserLock = <T>(userId: string, fn: () => Promise<T>): Promise<T> => withMoneyLock(`user:${userId}`, fn)
+export const withUserLock = withAccountLock
 
 export async function getJars(userId: string): Promise<Jar[]> {
   let r = await run('SELECT * FROM jars WHERE user_id = ?', [userId])
@@ -128,8 +128,7 @@ export function jarDueAt(j: Pick<Jar, 'everyDays' | 'lastPaidAt'>): number | nul
  */
 export async function syncJars(user: User): Promise<bigint> {
   return withUserLock(user.id, async () => {
-    const pending = await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding') LIMIT 1", [user.id])
-    if (pending.rows.length) return 0n
+    if (await hasPendingFunds(user.id, user.rootAddress)) return 0n
     const balance = await spendableWei(user)
     const jars = await getJars(user.id)
     const allocated = jars.reduce((s, j) => s + j.balanceWei, 0n)
@@ -175,7 +174,7 @@ export async function moveToJar(user: User, kind: JarKind, ngn: number, requestI
     if (!Number.isFinite(ngn) || ngn <= 0) throw new Error('Enter a positive amount to move.')
     const request = requestId ? await moneyRequest(user.id, `move:${requestId}`, { kind, ngn }) : null
     if (request?.result) return request.result as { movedGd: number }
-    if ((await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding')", [user.id])).rows.length) throw new Error('Wait for your pending payment or refund before changing budgets.')
+    if (await hasPendingFunds(user.id, user.rootAddress)) throw new Error('Wait for your pending payment or refund before changing budgets.')
     const want = await gdForNgn(ngn)
     const balance = await spendableWei(user)
     const jars = await getJars(user.id)
@@ -199,7 +198,7 @@ export async function reallocateJar(user: User, from: JarKind | 'free', to: JarK
     if (from === to || amount <= 0n) throw new Error('Choose different jars and a positive amount.')
     const request = await moneyRequest(user.id, `budget:${requestId}`, { from, to, amount: String(amount) })
     if (request.result) return
-    if ((await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding')", [user.id])).rows.length) throw new Error('Wait for your pending payment or refund before changing budgets.')
+    if (await hasPendingFunds(user.id, user.rootAddress)) throw new Error('Wait for your pending payment or refund before changing budgets.')
     const balance = await spendableWei(user)
     await atomic(async (tx) => {
       const rows = (await tx.execute({ sql: 'SELECT kind, balance_wei FROM jars WHERE user_id = ?', args: [user.id] })).rows

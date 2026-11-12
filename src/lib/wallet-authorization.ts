@@ -16,11 +16,17 @@ export const WALLET_LINKED_MESSAGE = 'This wallet already has a Jara account. Si
 
 export async function bindWallet(userId: string, rootAddress: string) {
   await atomic(async (tx) => {
-    const other = await tx.execute({ sql: 'SELECT 1 FROM users WHERE lower(root_address) = ? AND connected = 1 AND id != ?', args: [rootAddress.toLowerCase(), userId] })
-    if (other.rows.length) throw new Error(WALLET_LINKED_MESSAGE)
-    await tx.execute({ sql: 'INSERT OR IGNORE INTO wallet_bindings(root_address, user_id) VALUES (?, ?)', args: [rootAddress.toLowerCase(), userId] })
-    const binding = (await tx.execute({ sql: 'SELECT user_id FROM wallet_bindings WHERE root_address = ?', args: [rootAddress.toLowerCase()] })).rows[0]
-    if (binding?.user_id !== userId) throw new Error(WALLET_LINKED_MESSAGE)
+    const root = rootAddress.toLowerCase()
+    const shared = (await tx.execute({ sql: `SELECT s.user_id FROM wallet_sharing s JOIN users u ON u.id = s.user_id
+      WHERE s.root_address = ? AND lower(u.root_address) = ? AND u.connected = 1 ORDER BY u.created_at, u.id`, args: [root, root] })).rows.map((r) => String(r.user_id))
+    const approved = shared.includes(userId)
+    if (!approved) {
+      const other = await tx.execute({ sql: 'SELECT 1 FROM users WHERE lower(root_address) = ? AND connected = 1 AND id != ?', args: [root, userId] })
+      if (other.rows.length) throw new Error(WALLET_LINKED_MESSAGE)
+    }
+    await tx.execute({ sql: 'INSERT OR IGNORE INTO wallet_bindings(root_address, user_id) VALUES (?, ?)', args: [root, approved ? shared[0] : userId] })
+    const binding = (await tx.execute({ sql: 'SELECT user_id FROM wallet_bindings WHERE root_address = ?', args: [root] })).rows[0]
+    if (binding?.user_id !== userId && !(approved && shared.includes(String(binding?.user_id)))) throw new Error(WALLET_LINKED_MESSAGE)
   })
 }
 

@@ -13,6 +13,11 @@ const SCHEMA = [
     submitted_at INTEGER, revision INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS wallet_bindings (root_address TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE)`,
+  // Explicit operator grants for existing accounts sharing one verified wallet.
+  // The original binding remains the default account for wallet sign-in.
+  `CREATE TABLE IF NOT EXISTS wallet_sharing (
+    user_id TEXT PRIMARY KEY REFERENCES users(id), root_address TEXT NOT NULL, created_at INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS money_locks (id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS chain_transactions (
     id TEXT PRIMARY KEY, sender TEXT NOT NULL, intent TEXT NOT NULL,

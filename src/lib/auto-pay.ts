@@ -6,6 +6,7 @@ import { MoneyBusyError, withMoneyLock } from './money-lock'
 import { gdForNgn } from './price'
 import { getUserById, isBillKind, type PendingAction, type User } from './users'
 import { authorizedUser } from './wallet-authorization'
+import { hasPendingFunds } from './account-lock'
 
 const paymentDay = (at: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos' }).format(at)
 type AutoPayment = { description: string; result: BillResult }
@@ -34,7 +35,7 @@ export async function checkAutoPay(user: User): Promise<AutoPayment[]> {
 
     if (!enabled) return payments
     // Don't reconcile or start new purchases while funds are reserved/refunding.
-    if ((await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding') LIMIT 1", [user.id])).rows.length) return payments
+    if (await hasPendingFunds(user.id, user.rootAddress)) return payments
     await syncJars(user)
     const today = paymentDay(Date.now())
     for (const jar of await getJars(user.id)) {

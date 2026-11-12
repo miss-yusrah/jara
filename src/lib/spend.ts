@@ -10,7 +10,7 @@ import {
   treasuryAddress,
 } from './chain'
 import { atomic, run } from './db'
-import { withMoneyLock } from './money-lock'
+import { hasPendingFunds, withAccountLock } from './account-lock'
 import { authorizedUser } from './wallet-authorization'
 import { hasSubmittedTransaction, TransferPendingError, TransferRevertedError } from './chain-outbox'
 import { moneyRequest } from './money-request'
@@ -101,7 +101,7 @@ export async function spendableWei(user: User): Promise<bigint> {
  * commit together. Unknown chain outcomes stay reserved until the SAME ID resumes.
  */
 export async function spendGd(input: User, amount: bigint, request: { id: string; jar: JarKind }): Promise<{ hash: string }> {
-  return withMoneyLock(`user:${input.id}`, async () => {
+  return withAccountLock(input.id, async () => {
     if (amount <= 0n) throw new Error('Payment amount must be positive.')
     let payment = (await run('SELECT * FROM payments WHERE id = ?', [request.id])).rows[0]
     if (payment && (payment.user_id !== input.id || payment.jar !== request.jar || payment.amount_wei !== String(amount))) throw new Error('Payment request does not match its original amount or owner.')
@@ -122,8 +122,7 @@ export async function spendGd(input: User, amount: bigint, request: { id: string
       }
     }
     if (!payment) {
-      const pending = await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding')", [user.id])
-      if (pending.rows.length) throw new TransferPendingError()
+      if (await hasPendingFunds(user.id, user.rootAddress)) throw new TransferPendingError()
       const p = await spendingPower(user)
       // Never split a purchase between the agent wallet and the user's wallet.
       const owedFromWallet = pos(p.owedWei - p.agentWei)
@@ -180,7 +179,7 @@ async function releaseReservation(payment: Row) {
 
 /** A failed service refunds the original funding wallet, with one durable transfer. */
 export async function refundPayment(user: User, id: string): Promise<string> {
-  return withMoneyLock(`user:${user.id}`, async () => {
+  return withAccountLock(user.id, async () => {
     const p = (await run('SELECT * FROM payments WHERE id = ? AND user_id = ?', [id, user.id])).rows[0]
     if (!p) throw new Error('Payment record not found.')
     if (p.status === 'refunded') return String(p.refund_hash)
@@ -208,8 +207,7 @@ export async function withdrawToWallet(input: User, requestId: string): Promise<
   const request = await moneyRequest<{ amount: string; to: Address }>(user.id, `withdraw:${requestId}`, { action: 'withdraw' })
   if (request.result) return { hash: request.result.hash, amountWei: BigInt(request.result.amount) }
   if (!request.data) {
-    const pending = await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding')", [user.id])
-    if (pending.rows.length) throw new TransferPendingError()
+    if (await hasPendingFunds(user.id, user.rootAddress)) throw new TransferPendingError()
     const p = await spendingPower(user)
     if (p.agentAvailWei === 0n) return null
     request.data = { amount: String(p.agentAvailWei), to: user.rootAddress! }
