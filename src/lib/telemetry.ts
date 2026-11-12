@@ -30,7 +30,9 @@ export function telemetryConfig() {
   return { address, key, enabled: Boolean(address && key) }
 }
 
-const refOf = (s: string) => keccak256(toBytes(`jara:${s}`))
+// Real-mode events get their own namespace so they can never collide with refs already used by demo events
+// (the database is reset when switching to real G$, so activity ids start again from 1).
+const refOf = (s: string, demo: boolean) => keccak256(toBytes(demo ? `jara:${s}` : `jara:real:${s}`))
 
 /** App events not yet written on-chain, oldest first: user joins, then completed G$ movements. */
 async function pending(limit: number): Promise<{ id: string; entry: Entry }[]> {
@@ -45,7 +47,7 @@ async function pending(limit: number): Promise<{ id: string; entry: Entry }[]> {
   )
   for (const r of joins.rows) {
     const id = `join:${r.id}`
-    out.push({ id, entry: { user: r.agent_address as Address, kind: KIND.joined, amount: 0n, ref: refOf(id), demo } })
+    out.push({ id, entry: { user: r.agent_address as Address, kind: KIND.joined, amount: 0n, ref: refOf(id, demo), demo } })
   }
   if (out.length >= limit) return out
   const acts = await run(
@@ -59,7 +61,7 @@ async function pending(limit: number): Promise<{ id: string; entry: Entry }[]> {
     const amount = BigInt(String(r.amount_wei))
     if (amount <= 0n) continue
     const id = `act:${r.id}`
-    out.push({ id, entry: { user: r.agent_address as Address, kind: KIND[r.type as keyof typeof KIND], amount, ref: refOf(id), demo } })
+    out.push({ id, entry: { user: r.agent_address as Address, kind: KIND[r.type as keyof typeof KIND], amount, ref: refOf(id, demo), demo } })
   }
   return out
 }
