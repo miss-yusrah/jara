@@ -237,7 +237,44 @@ export async function run(sql: string, args: InValue[] = []) {
   if (moneyLockContext.getStore()?.size && !/^\s*SELECT\b/i.test(sql)) {
     return atomic((tx) => tx.execute({ sql, args }))
   }
-  return (await db()).execute({ sql, args })
+  return executeStatement(sql, args)
+}
+
+// Retry only SQLite's explicit contention error, and only at boundaries that
+// have not committed work. Yield so another request can release its lock;
+// a synchronous SQLite busy timeout would block that request's event loop.
+async function retryDatabaseBusy<T>(fn: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + 1_000
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'SQLITE_BUSY' || Date.now() >= deadline) throw error
+      await new Promise((resolve) => setTimeout(resolve, Math.min(20 * 2 ** Math.min(attempt, 3), 100, deadline - Date.now())))
+    }
+  }
+}
+
+// Standalone statements only. Money-lock bookkeeping uses this directly so
+// acquiring/releasing a lease does not itself require holding that lease.
+export async function executeStatement(sql: string, args: InValue[] = []) {
+  const shared = await db()
+  return retryDatabaseBusy(async () => {
+    const client = operationClient(shared)
+    try {
+      return await client.execute({ sql, args })
+    } finally {
+      if (client !== shared) client.close()
+    }
+  })
+}
+
+// The local driver can leave a failed statement active after SQLITE_BUSY.
+// Keep each local operation's connection private and close it on completion,
+// including failed BEGIN attempts. Remote clients keep their normal pooling.
+function operationClient(shared: Client): Client {
+  const config = serverConfig().db
+  return config.url.startsWith('file:') ? createClient(config) : shared
 }
 
 // Every ledger write checks lease ownership inside the same database transaction.
@@ -245,7 +282,16 @@ export async function run(sql: string, args: InValue[] = []) {
 export const moneyLockContext = new AsyncLocalStorage<Map<string, string>>()
 
 export async function atomic<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
-  const tx = await (await db()).transaction('write')
+  const shared = await db()
+  const { client, tx } = await retryDatabaseBusy(async () => {
+    const client = operationClient(shared)
+    try {
+      return { client, tx: await client.transaction('write') }
+    } catch (error) {
+      if (client !== shared) client.close()
+      throw error
+    }
+  })
   try {
     for (const [id, owner] of moneyLockContext.getStore() ?? []) {
       const lock = await tx.execute({ sql: 'SELECT 1 FROM money_locks WHERE id = ? AND owner = ? AND expires_at > ?', args: [id, owner, Date.now()] })
@@ -259,5 +305,6 @@ export async function atomic<T>(fn: (tx: Transaction) => Promise<T>): Promise<T>
     throw err
   } finally {
     tx.close()
+    if (client !== shared) client.close()
   }
 }

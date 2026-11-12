@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { db, moneyLockContext } from './db'
+import { executeStatement, moneyLockContext } from './db'
 
 const LEASE_MS = 120_000
 
@@ -17,22 +17,19 @@ export class MoneyBusyError extends Error {
  */
 export async function withMoneyLock<T>(id: string, fn: () => Promise<T>, opts: { waitMs?: number } = {}): Promise<T> {
   if (moneyLockContext.getStore()?.has(id)) return fn()
-  const client = await db()
   const owner = randomUUID()
   const deadline = Date.now() + (opts.waitMs ?? 0)
   for (;;) {
-    const acquired = await client.execute({
-      sql: `INSERT INTO money_locks(id, owner, expires_at) VALUES (?, ?, ?)
+    const acquired = await executeStatement(`INSERT INTO money_locks(id, owner, expires_at) VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
         WHERE money_locks.expires_at < ?`,
-      args: [id, owner, Date.now() + LEASE_MS, Date.now()],
-    })
+      [id, owner, Date.now() + LEASE_MS, Date.now()])
     if (acquired.rowsAffected) break
     if (Date.now() >= deadline) throw new MoneyBusyError()
     await new Promise((r) => setTimeout(r, 400 + Math.random() * 300))
   }
   const heartbeat = setInterval(() => {
-    void client.execute({ sql: 'UPDATE money_locks SET expires_at = ? WHERE id = ? AND owner = ?', args: [Date.now() + LEASE_MS, id, owner] }).catch(() => undefined)
+    void executeStatement('UPDATE money_locks SET expires_at = ? WHERE id = ? AND owner = ?', [Date.now() + LEASE_MS, id, owner]).catch(() => undefined)
   }, LEASE_MS / 3)
   heartbeat.unref()
   try {
@@ -41,6 +38,6 @@ export async function withMoneyLock<T>(id: string, fn: () => Promise<T>, opts: {
     return await moneyLockContext.run(context, fn)
   } finally {
     clearInterval(heartbeat)
-    await client.execute({ sql: 'DELETE FROM money_locks WHERE id = ? AND owner = ?', args: [id, owner] })
+    await executeStatement('DELETE FROM money_locks WHERE id = ? AND owner = ?', [id, owner])
   }
 }
