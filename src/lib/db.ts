@@ -90,6 +90,11 @@ const SCHEMA = [
     created_at INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS ai_runs_user_idx ON ai_runs (user_id, id)`,
+  `CREATE TABLE IF NOT EXISTS telemetry_sent (
+    id TEXT PRIMARY KEY,
+    tx_hash TEXT NOT NULL,
+    sent_at INTEGER NOT NULL
+  )`,
   // One row per reward a user has received, keyed so each reward pays once per period.
   `CREATE TABLE IF NOT EXISTS rewards_paid (
     user_id TEXT NOT NULL REFERENCES users (id),

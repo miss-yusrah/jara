@@ -1,0 +1,396 @@
+{
+ "contractName": "JaraTelemetry",
+ "abi": [
+  {
+   "type": "constructor",
+   "inputs": [
+    {
+     "name": "reporter",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "stateMutability": "nonpayable"
+  },
+  {
+   "type": "function",
+   "name": "circulation",
+   "inputs": [
+    {
+     "name": "demo",
+     "type": "bool",
+     "internalType": "bool"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "sum",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "demoTotals",
+   "inputs": [
+    {
+     "name": "kind",
+     "type": "uint8",
+     "internalType": "enum JaraTelemetry.Kind"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "amount",
+     "type": "uint256",
+     "internalType": "uint256"
+    },
+    {
+     "name": "count",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "demoUsers",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "isDemoUser",
+   "inputs": [
+    {
+     "name": "",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "",
+     "type": "bool",
+     "internalType": "bool"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "isReporter",
+   "inputs": [
+    {
+     "name": "",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "",
+     "type": "bool",
+     "internalType": "bool"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "isUser",
+   "inputs": [
+    {
+     "name": "",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "",
+     "type": "bool",
+     "internalType": "bool"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "owner",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "record",
+   "inputs": [
+    {
+     "name": "entries",
+     "type": "tuple[]",
+     "internalType": "struct JaraTelemetry.Entry[]",
+     "components": [
+      {
+       "name": "user",
+       "type": "address",
+       "internalType": "address"
+      },
+      {
+       "name": "kind",
+       "type": "uint8",
+       "internalType": "enum JaraTelemetry.Kind"
+      },
+      {
+       "name": "amount",
+       "type": "uint256",
+       "internalType": "uint256"
+      },
+      {
+       "name": "ref",
+       "type": "bytes32",
+       "internalType": "bytes32"
+      },
+      {
+       "name": "demo",
+       "type": "bool",
+       "internalType": "bool"
+      }
+     ]
+    }
+   ],
+   "outputs": [],
+   "stateMutability": "nonpayable"
+  },
+  {
+   "type": "function",
+   "name": "recorded",
+   "inputs": [
+    {
+     "name": "",
+     "type": "bytes32",
+     "internalType": "bytes32"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "",
+     "type": "bool",
+     "internalType": "bool"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "setReporter",
+   "inputs": [
+    {
+     "name": "reporter",
+     "type": "address",
+     "internalType": "address"
+    },
+    {
+     "name": "allowed",
+     "type": "bool",
+     "internalType": "bool"
+    }
+   ],
+   "outputs": [],
+   "stateMutability": "nonpayable"
+  },
+  {
+   "type": "function",
+   "name": "summary",
+   "inputs": [
+    {
+     "name": "demo",
+     "type": "bool",
+     "internalType": "bool"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "userCount",
+     "type": "uint256",
+     "internalType": "uint256"
+    },
+    {
+     "name": "amounts",
+     "type": "uint256[7]",
+     "internalType": "uint256[7]"
+    },
+    {
+     "name": "counts",
+     "type": "uint256[7]",
+     "internalType": "uint256[7]"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "totals",
+   "inputs": [
+    {
+     "name": "kind",
+     "type": "uint8",
+     "internalType": "enum JaraTelemetry.Kind"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "amount",
+     "type": "uint256",
+     "internalType": "uint256"
+    },
+    {
+     "name": "count",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "function",
+   "name": "transferOwnership",
+   "inputs": [
+    {
+     "name": "to",
+     "type": "address",
+     "internalType": "address"
+    }
+   ],
+   "outputs": [],
+   "stateMutability": "nonpayable"
+  },
+  {
+   "type": "function",
+   "name": "users",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "",
+     "type": "uint256",
+     "internalType": "uint256"
+    }
+   ],
+   "stateMutability": "view"
+  },
+  {
+   "type": "event",
+   "name": "Activity",
+   "inputs": [
+    {
+     "name": "user",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    },
+    {
+     "name": "kind",
+     "type": "uint8",
+     "indexed": true,
+     "internalType": "enum JaraTelemetry.Kind"
+    },
+    {
+     "name": "amount",
+     "type": "uint256",
+     "indexed": false,
+     "internalType": "uint256"
+    },
+    {
+     "name": "ref",
+     "type": "bytes32",
+     "indexed": true,
+     "internalType": "bytes32"
+    },
+    {
+     "name": "demo",
+     "type": "bool",
+     "indexed": false,
+     "internalType": "bool"
+    },
+    {
+     "name": "at",
+     "type": "uint64",
+     "indexed": false,
+     "internalType": "uint64"
+    }
+   ],
+   "anonymous": false
+  },
+  {
+   "type": "event",
+   "name": "OwnershipTransferred",
+   "inputs": [
+    {
+     "name": "from",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    },
+    {
+     "name": "to",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    }
+   ],
+   "anonymous": false
+  },
+  {
+   "type": "event",
+   "name": "ReporterSet",
+   "inputs": [
+    {
+     "name": "reporter",
+     "type": "address",
+     "indexed": true,
+     "internalType": "address"
+    },
+    {
+     "name": "allowed",
+     "type": "bool",
+     "indexed": false,
+     "internalType": "bool"
+    }
+   ],
+   "anonymous": false
+  },
+  {
+   "type": "error",
+   "name": "NotOwner",
+   "inputs": []
+  },
+  {
+   "type": "error",
+   "name": "NotReporter",
+   "inputs": []
+  },
+  {
+   "type": "error",
+   "name": "ZeroAddress",
+   "inputs": []
+  }
+ ],
+ "bytecode": "0x608060405234801561001057600080fd5b50604051610cac380380610cac83398101604081905261002f916100da565b600080546001600160a01b0319163390811782556040519091907f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0908290a36001600160a01b038116156100d4576001600160a01b038116600081815260016020818152604092839020805460ff19168317905591519081527f49414e0a37c19781141fced7b2dc68c560d888c72174623b7bba993149d9064d910160405180910390a25b5061010a565b6000602082840312156100ec57600080fd5b81516001600160a01b038116811461010357600080fd5b9392505050565b610b93806101196000396000f3fe608060405234801561001057600080fd5b50600436106100ea5760003560e01c8063aa54ccf61161008c578063e1bb513311610066578063e1bb513314610244578063e5768df714610257578063f20202751461026a578063f2fde38b1461027357600080fd5b8063aa54ccf6146101eb578063bc9bf76c146101fe578063d63997901461022157600080fd5b80634209fff1116100c85780634209fff1146101605780638da5cb5b146101835780639cde09dc146101ae578063a1101237146101d657600080fd5b8063044ad7be146100ef5780630a45e414146101275780630ace7ffd1461013e575b600080fd5b6101126100fd36600461098d565b60016020526000908152604090205460ff1681565b60405190151581526020015b60405180910390f35b61013060065481565b60405190815260200161011e565b61015161014c3660046109bf565b610286565b60405161011e939291906109fd565b61011261016e36600461098d565b60036020526000908152604090205460ff1681565b600054610196906001600160a01b031681565b6040516001600160a01b03909116815260200161011e565b6101c16101bc366004610a28565b61031d565b6040805192835260208301919091520161011e565b6101e96101e4366004610a49565b610375565b005b6101306101f93660046109bf565b610769565b61011261020c36600461098d565b60046020526000908152604090205460ff1681565b61011261022f366004610abe565b60026020526000908152604090205460ff1681565b6101e9610252366004610ad7565b6107b8565b6101c1610265366004610a28565b610869565b61013060055481565b6101e961028136600461098d565b6108a6565b6000610290610953565b610298610953565b836102a9576005546007600e6102b1565b6006546015601c5b6040805160e081019182905290839060079082845b8154815260200190600101908083116102c65750506040805160e081019182905294965085935060079250905082845b8154815260200190600101908083116102f657505050505090509250925092509193909250565b600080600783600681111561033457610334610b0a565b6007811061034457610344610b20565b0154600e84600681111561035a5761035a610b0a565b6007811061036a5761036a610b20565b015491509150915091565b3360009081526001602052604090205460ff166103a55760405163e5ce9c0960e01b815260040160405180910390fd5b4260005b8281101561076357368484838181106103c4576103c4610b20565b60a00291909101606081013560009081526002602052604090205490925060ff161590506103f2575061075b565b6000610401602083018361098d565b6001600160a01b0316036104285760405163d92e233d60e01b815260040160405180910390fd5b60608101356000908152600260209081526040808320805460ff1916600117905561045891908401908401610a28565b600681111561046957610469610b0a565b905061047b60a08301608084016109bf565b156105a15781604001356015826007811061049857610498610b20565b0160008282546104a89190610b36565b9091555060019050601c82600781106104c3576104c3610b20565b0160008282546104d39190610b36565b90915550600090506104eb6040840160208501610a28565b60068111156104fc576104fc610b0a565b148015610534575060046000610515602085018561098d565b6001600160a01b0316815260208101919091526040016000205460ff16155b1561059c5760016004600061054c602086018661098d565b6001600160a01b03166001600160a01b0316815260200190815260200160002060006101000a81548160ff0219169083151502179055506001600660008282546105969190610b36565b90915550505b6106bd565b8160400135600782600781106105b9576105b9610b20565b0160008282546105c99190610b36565b9091555060019050600e82600781106105e4576105e4610b20565b0160008282546105f49190610b36565b909155506000905061060c6040840160208501610a28565b600681111561061d5761061d610b0a565b148015610655575060036000610636602085018561098d565b6001600160a01b0316815260208101919091526040016000205460ff16155b156106bd5760016003600061066d602086018661098d565b6001600160a01b03166001600160a01b0316815260200190815260200160002060006101000a81548160ff0219169083151502179055506001600560008282546106b79190610b36565b90915550505b60608201356106d26040840160208501610a28565b60068111156106e3576106e3610b0a565b6106f0602085018561098d565b6001600160a01b03167fb103d7a397f9259d625b27cebe46d4e833f51892c5523c030e256a937dff0c19604086013561072f60a08801608089016109bf565b60408051928352901515602083015267ffffffffffffffff8a169082015260600160405180910390a450505b6001016103a9565b50505050565b6000808261077857600761077b565b60155b905060015b60078110156107b15781816007811061079b5761079b610b20565b01546107a79084610b36565b9250600101610780565b5050919050565b6000546001600160a01b031633146107e3576040516330cd747160e01b815260040160405180910390fd5b6001600160a01b03821661080a5760405163d92e233d60e01b815260040160405180910390fd5b6001600160a01b038216600081815260016020908152604091829020805460ff191685151590811790915591519182527f49414e0a37c19781141fced7b2dc68c560d888c72174623b7bba993149d9064d910160405180910390a25050565b600080601583600681111561088057610880610b0a565b6007811061089057610890610b20565b0154601c84600681111561035a5761035a610b0a565b6000546001600160a01b031633146108d1576040516330cd747160e01b815260040160405180910390fd5b6001600160a01b0381166108f85760405163d92e233d60e01b815260040160405180910390fd5b600080546040516001600160a01b03808516939216917f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e091a3600080546001600160a01b0319166001600160a01b0392909216919091179055565b6040518060e001604052806007906020820280368337509192915050565b80356001600160a01b038116811461098857600080fd5b919050565b60006020828403121561099f57600080fd5b6109a882610971565b9392505050565b8035801515811461098857600080fd5b6000602082840312156109d157600080fd5b6109a8826109af565b8060005b60078110156107635781518452602093840193909101906001016109de565b8381526101e08101610a1260208301856109da565b610a206101008301846109da565b949350505050565b600060208284031215610a3a57600080fd5b8135600781106109a857600080fd5b60008060208385031215610a5c57600080fd5b823567ffffffffffffffff80821115610a7457600080fd5b818501915085601f830112610a8857600080fd5b813581811115610a9757600080fd5b86602060a083028501011115610aac57600080fd5b60209290920196919550909350505050565b600060208284031215610ad057600080fd5b5035919050565b60008060408385031215610aea57600080fd5b610af383610971565b9150610b01602084016109af565b90509250929050565b634e487b7160e01b600052602160045260246000fd5b634e487b7160e01b600052603260045260246000fd5b80820180821115610b5757634e487b7160e01b600052601160045260246000fd5b9291505056fea26469706673582212204ce4205a18fff556c958df1f9923ab80ee5bb53238016e03118b16f79bb7090c64736f6c63430008180033",
+ "compiler": "solc 0.8.24, optimizer 200 runs, evm paris"
+}
