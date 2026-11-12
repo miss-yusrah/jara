@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server'
 import { isDisco, isMeterType, normalizeMeterNumber, normalizePhone, detectNetwork, isNetwork } from '@/lib/catalog'
-import { serverConfig } from '@/lib/env'
+import { serverConfig, testNumbersAllowed } from '@/lib/env'
 import { updateJar, type JarDetails } from '@/lib/jars'
 import { getTopupProvider } from '@/lib/providers'
 import { requireUser } from '@/lib/session'
 import { getUserById, isJarKind } from '@/lib/users'
 import { bad, userState } from '../_shared'
+import { parseEther } from 'viem'
+import { reallocateJar } from '@/lib/jars'
+import { requestKey } from '@/lib/money-request'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,6 +16,10 @@ export async function POST(req: Request) {
   const user = await requireUser()
   if (user instanceof NextResponse) return user
   const body = (await req.json().catch(() => ({}))) as {
+    action?: string
+    from?: string
+    amountGd?: string
+    requestId?: string
     kind?: string
     targetNgn?: number
     autoPay?: boolean
@@ -24,8 +31,17 @@ export async function POST(req: Request) {
     everyDays?: number | null
   }
   if (!isJarKind(body.kind)) return bad('Unknown jar')
+  if (body.action === 'move') {
+    if (!user.connected) return bad('Connect your GoodDollar account first.')
+    if (body.from !== 'free' && !isJarKind(body.from)) return bad('Choose a source jar.')
+    if (typeof body.amountGd !== 'string' || !/^\d{1,12}(\.\d{1,18})?$/.test(body.amountGd)) return bad('Enter a valid G$ amount.')
+    try {
+      await reallocateJar(user, body.from, body.kind, parseEther(body.amountGd), requestKey(body.requestId))
+      return NextResponse.json(await userState((await getUserById(user.id))!))
+    } catch (err) { return bad(err instanceof Error ? err.message : 'Could not change budgets.') }
+  }
   const details: JarDetails = {}
-  const testNumbers = serverConfig().provider === 'mock' || serverConfig().vtpass.env === 'sandbox'
+  const testNumbers = testNumbersAllowed()
 
   if (body.phone !== undefined && body.phone !== '') {
     const phone = normalizePhone(body.phone, testNumbers)

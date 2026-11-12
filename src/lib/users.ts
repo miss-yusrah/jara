@@ -23,6 +23,8 @@ export function isJarKind(v: unknown): v is JarKind {
 
 /** A bill the agent proposed and is waiting for the user to confirm. */
 export interface PendingAction {
+  id?: string
+  quoteWei?: string
   kind: BillKind
   amountNgn: number
   phone?: string
@@ -185,7 +187,7 @@ export interface Activity {
   amountWei: string | null
   amountNgn: number | null
   txHash: string | null
-  status: 'done' | 'pending' | 'failed'
+  status: 'done' | 'pending' | 'failed' | 'refund_pending'
   title: string
   detail: string | null
   createdAt: number

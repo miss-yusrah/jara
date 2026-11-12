@@ -17,7 +17,7 @@ export async function POST(req: Request) {
   if (!user.connected) return bad('Connect your GoodDollar account first.')
   try {
     const r = await runAgent(user.id)
-    return NextResponse.json({ steps: r.steps, message: r.message, state: await userState((await getUserById(user.id))!) })
+    return NextResponse.json({ steps: r.steps, message: r.message, notices: r.notices, state: await userState((await getUserById(user.id))!) })
   } catch (err) {
     console.error('[agent/run]', err)
     return bad('Jara hit a snag. Try again shortly.', 502)

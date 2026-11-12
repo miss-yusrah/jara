@@ -1,8 +1,11 @@
 import { formatEther } from 'viem'
-import { gdBalance } from './chain'
-import { run } from './db'
+import { gasStatus, gdBalance } from './chain'
+import { spendableWei, spendingPower } from './spend'
+import { atomic, run } from './db'
+import { withMoneyLock } from './money-lock'
+import { moneyRequest } from './money-request'
 import { gdForNgn, ngnPerGd } from './price'
-import { JAR_INFO, JAR_KINDS, logActivity, type JarKind, type User } from './users'
+import { JAR_INFO, JAR_KINDS, type JarKind, type User } from './users'
 
 // The agent wallet's on-chain G$ balance is the source of truth. Jars are a
 // ledger that splits that balance up; whatever isn't in a jar is "free".
@@ -50,20 +53,22 @@ export interface Snapshot {
   freeGd: number
   freeNgn: number
   ngnPerGd: number
+  /** G$ in the person's own GoodDollar wallet (not yet in Jara); null if unknown. */
+  walletGd: number | null
+  /** CELO in the Jara wallet for network fees, and what one transaction costs now; null if unknown. */
+  gas: { celo: number; perTxCelo: number } | null
+  /** wallet = G$ stays in their wallet under a spending limit; jar = older setup, G$ held by Jara. */
+  mode: 'wallet' | 'jar'
+  /** G$ Jara claimed and holds, after network fees owed back. */
+  claimedGd: number
+  /** How much more Jara may take from their wallet (wallet mode). */
+  limitLeftGd: number
+  /** Network fees Jara paid for them, owed back in G$. */
+  feesOwedGd: number
 }
 
-// One operation per user at a time, so two messages can't spend the same G$.
-const locks = new Map<string, Promise<unknown>>()
-export async function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
-  const prev = locks.get(userId) ?? Promise.resolve()
-  const next = prev.catch(() => undefined).then(fn)
-  locks.set(userId, next)
-  try {
-    return await next
-  } finally {
-    if (locks.get(userId) === next) locks.delete(userId)
-  }
-}
+// Database-backed lock also covers other workers and survives process restarts.
+export const withUserLock = <T>(userId: string, fn: () => Promise<T>): Promise<T> => withMoneyLock(`user:${userId}`, fn)
 
 export async function getJars(userId: string): Promise<Jar[]> {
   let r = await run('SELECT * FROM jars WHERE user_id = ?', [userId])
@@ -87,10 +92,6 @@ export async function getJars(userId: string): Promise<Jar[]> {
       lastPaidAt: x?.last_paid_at ? Number(x.last_paid_at) : null,
     }
   })
-}
-
-async function setJarBalance(userId: string, kind: JarKind, wei: bigint) {
-  await run('UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', [wei.toString(), userId, kind])
 }
 
 export async function updateJar(
@@ -124,107 +125,116 @@ export function jarDueAt(j: Pick<Jar, 'everyDays' | 'lastPaidAt'>): number | nul
  * Returns the amount of new G$ that was allocated.
  */
 export async function syncJars(user: User): Promise<bigint> {
-  const balance = await gdBalance(user.agentAddress)
-  const jars = await getJars(user.id)
-  const allocated = jars.reduce((s, j) => s + j.balanceWei, 0n)
+  return withUserLock(user.id, async () => {
+    const pending = await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding') LIMIT 1", [user.id])
+    if (pending.rows.length) return 0n
+    const balance = await spendableWei(user)
+    const jars = await getJars(user.id)
+    const allocated = jars.reduce((s, j) => s + j.balanceWei, 0n)
 
-  if (balance < allocated) {
-    // Balance dropped outside Jara: shrink jars proportionally so the ledger never exceeds reality.
-    for (const j of jars) {
-      const next = allocated === 0n ? 0n : (j.balanceWei * balance) / allocated
-      await setJarBalance(user.id, j.kind, next)
+    if (balance < allocated) {
+      // Balance dropped outside Jara: shrink jars proportionally so the ledger never exceeds reality.
+      await atomic(async (tx) => {
+        for (const j of jars) {
+          const next = allocated === 0n ? 0n : (j.balanceWei * balance) / allocated
+          await tx.execute({ sql: 'UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', args: [String(next), user.id, j.kind] })
+        }
+      })
+      return 0n
     }
-    return 0n
-  }
 
-  let free = balance - allocated
-  if (free === 0n) return 0n
-  const needs = await Promise.all(
-    jars.map(async (j) => {
-      const target = await gdForNgn(j.targetNgn)
-      return target > j.balanceWei ? target - j.balanceWei : 0n
-    }),
-  )
-  const totalNeed = needs.reduce((s, n) => s + n, 0n)
-  if (totalNeed === 0n) return 0n
-  const pool = free < totalNeed ? free : totalNeed
-  let given = 0n
-  for (let i = 0; i < jars.length; i++) {
-    const share = i === jars.length - 1 ? pool - given : (pool * needs[i]) / totalNeed
-    const capped = share > needs[i] ? needs[i] : share
-    given += capped
-    await setJarBalance(user.id, jars[i].kind, jars[i].balanceWei + capped)
-  }
-  free -= given
-  return given
-}
-
-/** Move naira-worth of G$ into a jar, taking from free balance first, then other jars. */
-export async function moveToJar(user: User, kind: JarKind, ngn: number): Promise<{ movedGd: number }> {
-  const want = await gdForNgn(ngn)
-  const balance = await gdBalance(user.agentAddress)
-  const jars = await getJars(user.id)
-  const target = jars.find((j) => j.kind === kind)!
-  let free = balance - jars.reduce((s, j) => s + j.balanceWei, 0n)
-  if (free < 0n) free = 0n
-  let moved = want < free ? want : free
-  for (const j of jars) {
-    if (moved >= want || j.kind === kind) continue
-    const take = want - moved < j.balanceWei ? want - moved : j.balanceWei
-    await setJarBalance(user.id, j.kind, j.balanceWei - take)
-    moved += take
-  }
-  await setJarBalance(user.id, kind, target.balanceWei + moved)
-  if (moved > 0n) {
-    await logActivity(user.id, {
-      type: 'move',
-      jar: kind,
-      amountWei: moved.toString(),
-      title: `Moved G$ ${Number(formatEther(moved)).toFixed(0)} into ${JAR_INFO[kind].label}`,
+    const free = balance - allocated
+    if (free === 0n) return 0n
+    const needs = await Promise.all(
+      jars.map(async (j) => {
+        const target = await gdForNgn(j.targetNgn)
+        return target > j.balanceWei ? target - j.balanceWei : 0n
+      }),
+    )
+    const totalNeed = needs.reduce((s, n) => s + n, 0n)
+    if (totalNeed === 0n) return 0n
+    const pool = free < totalNeed ? free : totalNeed
+    let given = 0n
+    await atomic(async (tx) => {
+      for (let i = 0; i < jars.length; i++) {
+        const share = i === jars.length - 1 ? pool - given : (pool * needs[i]) / totalNeed
+        const capped = share > needs[i] ? needs[i] : share
+        given += capped
+        await tx.execute({ sql: 'UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', args: [String(jars[i].balanceWei + capped), user.id, jars[i].kind] })
+      }
     })
-  }
-  return { movedGd: Number(formatEther(moved)) }
+    return given
+  })
 }
 
-/** Take G$ out of a jar ledger (used when paying from it). Spills into free balance, then other jars. */
-export async function debitJars(user: User, kind: JarKind, amount: bigint): Promise<boolean> {
-  const balance = await gdBalance(user.agentAddress)
-  if (balance < amount) return false
-  const jars = await getJars(user.id)
-  let remaining = amount
-  const primary = jars.find((j) => j.kind === kind)!
-  const fromPrimary = remaining < primary.balanceWei ? remaining : primary.balanceWei
-  await setJarBalance(user.id, kind, primary.balanceWei - fromPrimary)
-  remaining -= fromPrimary
-  const free = balance - jars.reduce((s, j) => s + j.balanceWei, 0n)
-  if (remaining > 0n && free > 0n) remaining -= remaining < free ? remaining : free
-  for (const j of jars) {
-    if (remaining === 0n || j.kind === kind) continue
-    const take = remaining < j.balanceWei ? remaining : j.balanceWei
-    await setJarBalance(user.id, j.kind, j.balanceWei - take)
-    remaining -= take
-  }
-  return remaining === 0n
+/** Allocate unassigned G$ to a jar. Other jar budgets are never borrowed automatically. */
+export async function moveToJar(user: User, kind: JarKind, ngn: number, requestId?: string): Promise<{ movedGd: number }> {
+  return withUserLock(user.id, async () => {
+    if (!Number.isFinite(ngn) || ngn <= 0) throw new Error('Enter a positive amount to move.')
+    const request = requestId ? await moneyRequest(user.id, `move:${requestId}`, { kind, ngn }) : null
+    if (request?.result) return request.result as { movedGd: number }
+    if ((await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding')", [user.id])).rows.length) throw new Error('Wait for your pending payment or refund before changing budgets.')
+    const want = await gdForNgn(ngn)
+    const balance = await spendableWei(user)
+    const jars = await getJars(user.id)
+    const target = jars.find((j) => j.kind === kind)!
+    let free = balance - jars.reduce((s, j) => s + j.balanceWei, 0n)
+    if (free < 0n) free = 0n
+    const moved = want < free ? want : free
+    const result = { movedGd: Number(formatEther(moved)) }
+    await atomic(async (tx) => {
+      await tx.execute({ sql: 'UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', args: [String(target.balanceWei + moved), user.id, kind] })
+      if (moved > 0n) await tx.execute({ sql: `INSERT INTO activity(user_id, type, jar, amount_wei, title, created_at) VALUES (?, 'move', ?, ?, ?, ?)`, args: [user.id, kind, String(moved), `Allocated G$ ${formatEther(moved)} to ${JAR_INFO[kind].label}`, Date.now()] })
+      if (request) await tx.execute({ sql: 'UPDATE money_requests SET result = ? WHERE id = ?', args: [JSON.stringify(result), request.id] })
+    })
+    return result
+  })
 }
 
-export async function creditJar(userId: string, kind: JarKind, amount: bigint) {
-  const jar = (await getJars(userId)).find((j) => j.kind === kind)!
-  await setJarBalance(userId, kind, jar.balanceWei + amount)
+/** Explicit user-approved budget change. This never moves tokens on-chain. */
+export async function reallocateJar(user: User, from: JarKind | 'free', to: JarKind, amount: bigint, requestId: string) {
+  return withUserLock(user.id, async () => {
+    if (from === to || amount <= 0n) throw new Error('Choose different jars and a positive amount.')
+    const request = await moneyRequest(user.id, `budget:${requestId}`, { from, to, amount: String(amount) })
+    if (request.result) return
+    if ((await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding')", [user.id])).rows.length) throw new Error('Wait for your pending payment or refund before changing budgets.')
+    const balance = await spendableWei(user)
+    await atomic(async (tx) => {
+      const rows = (await tx.execute({ sql: 'SELECT kind, balance_wei FROM jars WHERE user_id = ?', args: [user.id] })).rows
+      const balances = new Map(rows.map((r) => [String(r.kind), BigInt(String(r.balance_wei))]))
+      const allocated = [...balances.values()].reduce((sum, n) => sum + n, 0n)
+      if (allocated > balance) throw new Error('Your wallet balance changed. Refresh before moving budgets.')
+      const available = from === 'free' ? balance - allocated : balances.get(from) ?? 0n
+      if (available < amount) throw new Error('Not enough G$ in the selected source.')
+      if (from !== 'free') await tx.execute({ sql: 'UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', args: [String(available - amount), user.id, from] })
+      await tx.execute({ sql: 'UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', args: [String((balances.get(to) ?? 0n) + amount), user.id, to] })
+      await tx.execute({ sql: `INSERT INTO activity(user_id, type, jar, amount_wei, title, operation_id, created_at) VALUES (?, 'move', ?, ?, ?, ?, ?)`, args: [user.id, to, String(amount), `Moved G$ ${formatEther(amount)} from ${from} to ${to}`, request.id, Date.now()] })
+      await tx.execute({ sql: 'UPDATE money_requests SET result = ? WHERE id = ?', args: ['{"ok":true}', request.id] })
+    })
+  })
 }
 
 export async function snapshot(user: User): Promise<Snapshot> {
-  const [balance, jars, rate] = await Promise.all([gdBalance(user.agentAddress), getJars(user.id), ngnPerGd()])
+  const [power, jars, rate] = await Promise.all([spendingPower(user), getJars(user.id), ngnPerGd()])
+  const balance = power.totalWei
+  const walletWei = user.rootAddress ? power.walletWei || (await gdBalance(user.rootAddress).catch(() => null)) : null
+  // Gas only matters to people still on the older setup; in wallet mode Jara fronts it.
+  const gas = user.connected && power.mode === 'jar' ? await gasStatus(user.agentAddress).catch(() => null) : null
   const allocated = jars.reduce((s, j) => s + j.balanceWei, 0n)
-  const free = balance > allocated ? balance - allocated : 0n
+  const pending = (await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding') LIMIT 1", [user.id])).rows.length > 0
+  const free = !pending && balance > allocated ? balance - allocated : 0n
   const toGd = (w: bigint) => Number(formatEther(w))
   return {
     jars: jars.map((j) => {
-      const balanceNgn = Math.floor(toGd(j.balanceWei) * rate)
+      // A wallet owner may spend/revoke permission outside Jara between syncs.
+      // Never display more allocated G$ than the current spending balance.
+      const visibleWei = allocated > balance && allocated > 0n ? (j.balanceWei * balance) / allocated : j.balanceWei
+      const balanceNgn = Math.floor(toGd(visibleWei) * rate)
       return {
         kind: j.kind,
         label: JAR_INFO[j.kind].label,
         emoji: JAR_INFO[j.kind].emoji,
-        balanceGd: toGd(j.balanceWei),
+        balanceGd: toGd(visibleWei),
         balanceNgn,
         targetNgn: j.targetNgn,
         pct: j.targetNgn > 0 ? Math.min(100, Math.round((balanceNgn / j.targetNgn) * 100)) : 0,
@@ -238,5 +248,19 @@ export async function snapshot(user: User): Promise<Snapshot> {
     freeGd: toGd(free),
     freeNgn: Math.floor(toGd(free) * rate),
     ngnPerGd: rate,
+    walletGd: walletWei === null ? null : toGd(walletWei),
+    gas,
+    mode: power.mode,
+    claimedGd: toGd(power.agentAvailWei),
+    limitLeftGd: toGd(power.allowanceWei),
+    feesOwedGd: toGd(power.owedWei),
   }
+}
+
+/** What a jar can pay right now: its own balance plus G$ not budgeted to any jar. Other jars are never borrowed. */
+export async function jarSpendable(user: User, kind: JarKind): Promise<bigint> {
+  const [total, jars] = await Promise.all([spendableWei(user), getJars(user.id)])
+  const allocated = jars.reduce((s, j) => s + j.balanceWei, 0n)
+  const own = jars.find((j) => j.kind === kind)?.balanceWei ?? 0n
+  return own + (total > allocated ? total - allocated : 0n)
 }

@@ -1,10 +1,11 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { moneyRequest } from '../money-request'
 import { formatEther } from 'viem'
 import { describeAction, payBill, prepareBill } from '../bills'
 import { DISCO_INFO, formatNgn, isDisco, isNetwork, normalizePhone, detectNetwork } from '../catalog'
 import { run } from '../db'
 import { serverConfig } from '../env'
-import { moveToJar, snapshot, syncJars, updateJar, type Snapshot } from '../jars'
-import { gdForNgn } from '../price'
+import { moveToJar, snapshot, syncJars, updateJar, withUserLock, type Snapshot } from '../jars'
 import { runDaily } from '../daily'
 import { getUserById, isBillKind, isJarKind, listActivity, updateUser, type JarKind, type PendingAction, type User } from '../users'
 import { chat, llmReachable, type ChatMessage, type ToolDef } from './llm'
@@ -12,12 +13,15 @@ import { fallbackIntent } from './fallback'
 import { runAgent } from './routine'
 import { AI_TOOLS, isAiTool, runAiTool } from '../ai-tools'
 import { rewardProgress } from '../rewards'
+import { DRILL_PRICE_GD, EXAMS, SCOUT_PRICE_GD, daysUntil, examDrill, getJobs, isExam, opportunityScout, parseSubjects, saveJobs, saveToChat } from './jobs'
 
 export interface AgentReply {
   text: string
   /** Set when a bill is waiting for the user to tap Confirm. */
-  confirm?: { summary: string; gd: number }
+  confirm?: { id: string; summary: string; gd: number }
   explorerUrl?: string
+  /** Extra messages to deliver after the reply (e.g. the first exam drill). */
+  extra?: string[]
   engine: 'antseed' | 'llm' | 'rules'
 }
 
@@ -123,6 +127,35 @@ const TOOLS: ToolDef[] = [
   },
   {
     type: 'function',
+    function: {
+      name: 'set_exam_prep',
+      description: `Switch daily exam prep on or off. Each morning until the exam, Jara prepares a full-screen 20-question practice session, rotating through the subjects, for G$ ${DRILL_PRICE_GD} from the AI jar. Users select answers one at a time and review their score at the end. Tell the user the price before switching it on. The first session link is sent right away.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          on: { type: 'boolean' },
+          exam: { type: 'string', enum: [...EXAMS] },
+          subjects: { type: 'array', items: { type: 'string' }, description: 'e.g. ["Biology","Chemistry"]' },
+          exam_date: { type: 'string', description: 'YYYY-MM-DD' },
+        },
+        required: ['on'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_opportunity_scout',
+      description: `Switch the opportunity scout on or off. Every 3 days Jara checks real scholarship, internship and fellowship listings and sends up to 3 that match the user's interests, for G$ ${SCOUT_PRICE_GD} (only charged when something matches). Tell the user the price first.`,
+      parameters: {
+        type: 'object',
+        properties: { on: { type: 'boolean' }, interests: { type: 'string', description: 'e.g. "computer science scholarships, tech internships"' } },
+        required: ['on'],
+      },
+    },
+  },
+  {
+    type: 'function',
     function: { name: 'recent_activity', description: 'The last few things Jara did (claims, payments, rewards).', parameters: { type: 'object', properties: {} } },
   },
 ]
@@ -144,6 +177,7 @@ function systemPrompt(user: User, snap: Snapshot): string {
       ? 'Always use propose_bill for payments — never claim something is paid until the system confirms it.'
       : 'Never bring up bills or bill payments yourself, and never list them among the things you do. Bill payments (airtime, data, electricity) are NOT available yet. Only if the user asks to pay a bill, say in one short line that you can’t pay bills just yet, then offer what you can do: save their G$, collect rewards, or help in Jara AI (research, assignments, exam practice and more). Never discuss jar balances as if a payment is possible.',
     'After propose_bill succeeds, ask the user to confirm in one short line.',
+    `You can also work proactively: daily exam drills until their exam (set_exam_prep, G$ ${DRILL_PRICE_GD} a day) and an opportunity scout for scholarships and internships (set_opportunity_scout, G$ ${SCOUT_PRICE_GD} per match digest). Offer these when someone mentions an exam (WAEC, JAMB, NECO, Post-UTME) or looking for scholarships, internships or jobs. You also warn users before their GoodDollar face check expires.`,
     'Keep replies under 60 words. Use naira amounts.',
     `User: ${user.name ?? 'friend'}. Streak: ${user.streak} days. Jars: ${jars}. Spare: ${formatNgn(snap.freeNgn)}. 1 G$ = ₦${snap.ngnPerGd.toFixed(4)}.`,
   ].join(' ')
@@ -177,9 +211,9 @@ async function propose(user: User, args: Record<string, unknown>): Promise<{ tex
   })
   if ('error' in prepared) return { text: `error: ${prepared.error}` }
   await updateUser(user.id, { pending: prepared.action })
-  const gd = Number(formatEther(await gdForNgn(prepared.action.amountNgn)))
+  const gd = Number(formatEther(BigInt(prepared.action.quoteWei!)))
   const summary = describeAction(prepared.action)
-  return { text: `ready to confirm: ${summary} costing G$ ${gd.toFixed(0)}`, confirm: { summary, gd: Math.round(gd) } }
+  return { text: `ready to confirm: ${summary} costing G$ ${gd.toFixed(0)}`, confirm: { id: prepared.action.id!, summary, gd: Math.ceil(gd) } }
 }
 
 async function setJar(user: User, args: Record<string, unknown>): Promise<string> {
@@ -199,7 +233,9 @@ async function setJar(user: User, args: Record<string, unknown>): Promise<string
   return `updated ${args.jar} jar`
 }
 
-async function executeTool(user: User, name: string, args: Record<string, unknown>, out: { confirm?: AgentReply['confirm'] }) {
+type ToolOut = { confirm?: AgentReply['confirm']; extra?: string[] }
+
+async function executeTool(user: User, name: string, args: Record<string, unknown>, out: ToolOut) {
   switch (name) {
     case 'get_jars':
       return JSON.stringify(await snapshot(user))
@@ -210,7 +246,9 @@ async function executeTool(user: User, name: string, args: Record<string, unknow
     }
     case 'move_to_jar': {
       if (!isJarKind(args.jar)) return 'error: unknown jar'
-      const r = await moveToJar(user, args.jar, Number(args.amount_ngn))
+      const messageId = agentRequestContext.getStore()
+      if (!messageId) throw new Error('A saved message is required before changing budgets.')
+      const r = await moveToJar(user, args.jar, Number(args.amount_ngn), `message:${messageId}`)
       return r.movedGd > 0 ? `moved G$ ${r.movedGd.toFixed(0)}` : 'error: no G$ available to move'
     }
     case 'set_jar':
@@ -226,7 +264,9 @@ async function executeTool(user: User, name: string, args: Record<string, unknow
     case 'use_ai_helper': {
       if (!isAiTool(args.tool)) return 'error: unknown helper'
       const fresh = (await getUserById(user.id))!
-      const r = await runAiTool(fresh, args.tool, String(args.input ?? ''))
+      const messageId = agentRequestContext.getStore()
+      if (!messageId) throw new Error('A saved message is required before starting paid AI.')
+      const r = await runAiTool(fresh, args.tool, String(args.input ?? ''), `message:${messageId}:ai`)
       return r.ok ? `${r.demo ? '(demo preview, not charged) ' : `(charged G$ ${r.costGd}) `}${r.output}` : `error: ${r.message}`
     }
     case 'my_rewards':
@@ -234,7 +274,28 @@ async function executeTool(user: User, name: string, args: Record<string, unknow
     case 'run_agent': {
       const fresh = (await getUserById(user.id))!
       if (!fresh.connected) return 'error: user has not connected their GoodDollar account yet'
-      return (await runAgent(user.id)).message
+      const r = await runAgent(user.id)
+      return [r.message, ...r.notices].join('\n\n')
+    }
+    case 'set_exam_prep': {
+      if (args.on === false) {
+        await saveJobs(user.id, { examOn: false })
+        return 'daily exam drills switched off'
+      }
+      const r = await setExamPrep(user, { exam: args.exam, subjects: args.subjects, examDate: args.exam_date })
+      if ('error' in r) return `error: ${r.error}`
+      if (r.sent) (out.extra ??= []).push(r.sent)
+      return r.sent ? `${r.text}. The first drill is being sent as a separate message right after your reply; don't repeat it.` : r.text
+    }
+    case 'set_opportunity_scout': {
+      if (args.on === false) {
+        await saveJobs(user.id, { scoutOn: false })
+        return 'opportunity scout switched off'
+      }
+      const r = await setScout(user, args.interests)
+      if ('error' in r) return `error: ${r.error}`
+      if (r.sent) (out.extra ??= []).push(r.sent)
+      return r.sent ? `${r.text}. The matches are being sent as a separate message right after your reply; don't repeat them.` : r.text
     }
     case 'recent_activity':
       return JSON.stringify((await listActivity(user.id, 6)).map((a) => ({ title: a.title, status: a.status, when: new Date(a.createdAt).toISOString() })))
@@ -243,28 +304,97 @@ async function executeTool(user: User, name: string, args: Record<string, unknow
   }
 }
 
+// ---------- proactive jobs (shared by chat tools and the web API) ----------
+
+export async function setExamPrep(
+  user: User,
+  input: { exam?: unknown; subjects?: unknown; examDate?: unknown },
+): Promise<{ error: string } | { text: string; sent?: string }> {
+  const current = await getJobs(user.id)
+  const exam = input.exam === undefined ? current.exam : input.exam
+  if (!isExam(exam)) return { error: `exam must be one of ${EXAMS.join(', ')}` }
+  const subjects = input.subjects === undefined ? current.examSubjects : parseSubjects(input.subjects)
+  if (!subjects.length) return { error: 'which subjects? (e.g. Biology, Chemistry)' }
+  const date = input.examDate === undefined ? current.examDate : typeof input.examDate === 'string' ? input.examDate : null
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return { error: 'what date is the exam? (YYYY-MM-DD)' }
+  const left = daysUntil(date)
+  if (left < 1 || left > 400) return { error: 'the exam date should be in the future, within about a year' }
+  const restart = !current.examOn || current.exam !== exam
+  await saveJobs(user.id, { examOn: true, exam, examSubjects: subjects, examDate: date, ...(restart ? { examCount: 0, examLastDay: null } : {}) })
+  // Send the first drill right away so they see what they signed up for.
+  const first = await examDrill((await getUserById(user.id))!, await getJobs(user.id)).catch(() => null)
+  const base = `daily ${exam} drills on: ${subjects.join(', ')}, until ${date} (${left} days), G$ ${DRILL_PRICE_GD} each`
+  return { text: first ? `${base}. ${first.text}` : base, sent: first?.message }
+}
+
+export async function setScout(user: User, interests: unknown): Promise<{ error: string } | { text: string; sent?: string }> {
+  const current = await getJobs(user.id)
+  const text = typeof interests === 'string' ? interests.trim().replace(/\s+/g, ' ').slice(0, 200) : current.scoutInterests
+  if (!text || text.length < 3) return { error: 'what kind of opportunities? (e.g. engineering scholarships, tech internships)' }
+  await saveJobs(user.id, { scoutOn: true, scoutInterests: text, scoutLastAt: null })
+  const first = await opportunityScout((await getUserById(user.id))!, await getJobs(user.id)).catch(() => null)
+  const base = `opportunity scout on for "${text}": checks every 3 days, G$ ${SCOUT_PRICE_GD} only when something matches`
+  return { text: first ? `${base}. ${first.text}` : `${base}. Nothing new matched today; I'll keep looking.`, sent: first?.message }
+}
+
 // ---------- main entry ----------
 
-export async function handleMessage(userId: string, text: string): Promise<AgentReply> {
-  const user = (await getUserById(userId))!
-  const clean = text.trim()
-  await saveMessage(user.id, 'user', clean)
-  const reply = await respond(user, clean)
-  await saveMessage(user.id, 'assistant', reply.text)
-  return reply
+const agentRequestContext = new AsyncLocalStorage<string>()
+
+export async function handleMessage(userId: string, text: string, requestId: string): Promise<AgentReply> {
+  return withUserLock(userId, async () => {
+    const request = await moneyRequest(userId, `message:${requestId}`, { text: text.trim() })
+    if (request.result) return request.result as AgentReply
+    return agentRequestContext.run(requestId, async () => {
+      const user = (await getUserById(userId))!
+      const clean = text.trim()
+      await saveMessage(user.id, 'user', clean)
+      const reply = await respond(user, clean)
+      await saveMessage(user.id, 'assistant', reply.text)
+      for (const m of reply.extra ?? []) await saveToChat(user.id, m)
+      return request.finish(reply)
+    })
+  })
 }
 
 /** Confirm or cancel the waiting bill (buttons call this directly). */
-export async function resolvePending(userId: string, accept: boolean): Promise<AgentReply> {
-  const user = (await getUserById(userId))!
-  const pending = user.pending
-  await updateUser(user.id, { pending: null })
-  if (!pending || Date.now() - pending.createdAt > PENDING_TTL) {
-    return { text: 'That request expired. Tell me again what to pay.', engine: 'rules' }
-  }
-  if (!accept) return { text: 'No wahala, cancelled. Nothing was paid.', engine: 'rules' }
-  const res = await payBill(user, pending)
-  return { text: res.message, explorerUrl: res.explorerUrl, engine: 'rules' }
+export async function resolvePending(userId: string, accept: boolean, expectedId?: string): Promise<AgentReply> {
+  return withUserLock(userId, async () => {
+    const user = (await getUserById(userId))!
+    const pending = user.pending
+    if (expectedId && pending?.id !== expectedId) {
+      const prior = (await run('SELECT result FROM money_requests WHERE id = ? AND user_id = ?', [`${userId}:bill:${expectedId}`, userId])).rows[0]
+      if (prior?.result) return { text: JSON.parse(String(prior.result)).message, engine: 'rules' }
+      return { text: 'This confirmation does not match your current bill. Review the current bill before paying.', engine: 'rules' }
+    }
+    if (!pending) {
+      // Usually a second tap while the first one was still paying: say what happened to it.
+      const recent = (await run("SELECT title, status, detail FROM activity WHERE user_id = ? AND type = 'pay' AND created_at > ? ORDER BY id DESC LIMIT 1", [user.id, Date.now() - 10 * 60_000])).rows[0]
+      if (recent) {
+        const title = String(recent.title)
+        const text =
+          recent.status === 'done'
+            ? `Already done ✅ ${title}.${recent.detail && String(recent.detail).startsWith('Token') ? `\n\n🔑 ${recent.detail}` : ''}`
+            : recent.status === 'failed'
+              ? `${title} — it didn’t go through. Check its activity details for the payment or refund status.`
+              : `${title.replace(/^Paying /, 'Your ')} is still processing. I’ll message you as soon as it’s confirmed.`
+        return { text, engine: 'rules' }
+      }
+      return { text: 'That request expired. Tell me again what to pay.', engine: 'rules' }
+    }
+    if (Date.now() - pending.createdAt > PENDING_TTL && !(pending.id && (await run('SELECT 1 FROM money_requests WHERE id = ?', [`${user.id}:bill:${pending.id}`])).rows.length)) {
+      return { text: 'That request expired. Tell me again what to pay.', engine: 'rules' }
+    }
+    if (!accept) {
+      const existing = pending.id ? (await run('SELECT 1 FROM money_requests WHERE id = ?', [`${user.id}:bill:${pending.id}`])).rows.length > 0 : false
+      if (existing) return { text: 'This payment has already started. Its existing result will be checked; it cannot be cancelled here.', engine: 'rules' }
+      await updateUser(user.id, { pending: null })
+      return { text: 'No wahala, cancelled. Nothing was paid.', engine: 'rules' }
+    }
+    const res = await payBill(user, pending)
+    if (!res.pending) await updateUser(user.id, { pending: null })
+    return { text: res.message, explorerUrl: res.explorerUrl, engine: 'rules' }
+  })
 }
 
 async function respond(user: User, text: string): Promise<AgentReply> {
@@ -286,12 +416,12 @@ async function respond(user: User, text: string): Promise<AgentReply> {
 async function llmRespond(user: User, text: string, snap: Snapshot): Promise<AgentReply> {
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt(user, snap) }, ...(await history(user.id))]
   if (messages[messages.length - 1]?.content !== text) messages.push({ role: 'user', content: text })
-  const out: { confirm?: AgentReply['confirm'] } = {}
+  const out: ToolOut = {}
   for (let step = 0; step < 4; step++) {
     const msg = await chat(messages, serverConfig().billsLive ? TOOLS : TOOLS.filter((t) => t.function.name !== 'propose_bill'))
     if (!msg.tool_calls?.length) {
       const engine = serverConfig().llm.baseUrl.includes(':8377') ? 'antseed' : 'llm'
-      return { text: (msg.content ?? '').trim() || 'Done.', confirm: out.confirm, engine }
+      return { text: (msg.content ?? '').trim() || 'Done.', confirm: out.confirm, extra: out.extra, engine }
     }
     messages.push({ role: 'assistant', content: msg.content ?? null, tool_calls: msg.tool_calls })
     for (const call of msg.tool_calls) {
@@ -305,7 +435,7 @@ async function llmRespond(user: User, text: string, snap: Snapshot): Promise<Age
       messages.push({ role: 'tool', tool_call_id: call.id, content: result })
     }
   }
-  return { text: 'Sorry, I got confused. Try saying it another way?', confirm: out.confirm, engine: 'llm' }
+  return { text: 'Sorry, I got confused. Try saying it another way?', confirm: out.confirm, extra: out.extra, engine: 'llm' }
 }
 
 async function rulesRespond(user: User, text: string, snap: Snapshot): Promise<AgentReply> {

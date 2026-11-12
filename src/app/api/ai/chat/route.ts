@@ -1,3 +1,4 @@
+import { requestKey } from '@/lib/money-request'
 import { NextResponse } from 'next/server'
 import { sendChat } from '@/lib/ai-chat'
 import { isAiTool } from '@/lib/ai-tools'
@@ -15,7 +16,9 @@ export async function POST(req: Request) {
   if (!rateLimit(`ai:${user.id}`, 15, 10 * 60_000) || !rateLimit(`ai-ip:${clientIp(req)}`, 45, 10 * 60_000)) {
     return NextResponse.json({ error: 'You’ve asked a lot just now. Try again in a few minutes.' }, { status: 429 })
   }
-  const body = (await req.json().catch(() => ({}))) as { chatId?: string; tool?: string; text?: string }
+  const body = (await req.json().catch(() => ({}))) as { requestId?: string; chatId?: string; tool?: string; text?: string }
+  let requestId: string
+  try { requestId = requestKey(body.requestId) } catch { return NextResponse.json({ error: 'A request ID is required. Refresh and try again.' }, { status: 400 }) }
   if (!body.chatId && !isAiTool(body.tool)) return NextResponse.json({ error: 'Pick a helper' }, { status: 400 })
   const tool = isAiTool(body.tool) ? body.tool : 'research'
 
@@ -23,11 +26,11 @@ export async function POST(req: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const ev of sendChat(user, { chatId: body.chatId, tool, text: String(body.text ?? '') })) {
+        for await (const ev of sendChat(user, { requestId, chatId: body.chatId, tool, text: String(body.text ?? '') })) {
           controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'))
         }
       } catch {
-        controller.enqueue(enc.encode(JSON.stringify({ t: 'error', message: 'Something went wrong. You were not charged.' }) + '\n'))
+        controller.enqueue(enc.encode(JSON.stringify({ t: 'error', message: 'The result is not confirmed. Retry the same request to check its status.' }) + '\n'))
       }
       controller.close()
     },

@@ -1,11 +1,11 @@
 import { formatEther, parseEther } from 'viem'
 import { chat, llmReachable } from './agent/llm'
-import { gdBalance, sendGdFromAgent, treasuryAddress } from './chain'
-import { run } from './db'
+import { PaymentFailedError, spendGd } from './spend'
+import { moneyRequest } from './money-request'
+import { atomic, run } from './db'
 import { serverConfig } from './env'
-import { debitJars, syncJars, withUserLock } from './jars'
-import { logActivity, type User } from './users'
-import { decryptAgentKey } from './wallets'
+import { getJars, syncJars, withUserLock } from './jars'
+import { type User } from './users'
 
 // AI helpers people pay for with the G$ they've gathered. Each use moves G$
 // from the user's AI jar to the treasury on Celo; the treasury funds the
@@ -51,12 +51,12 @@ export const AI_TOOLS = {
   },
   exam: {
     name: 'Exam practice',
-    blurb: 'Practice questions with answers for WAEC, JAMB, NECO or your course.',
+    blurb: 'A full-screen, 20-question practice session with selectable answers and a results review.',
     priceGd: 200,
     maxTokens: 2000,
-    placeholder: 'e.g. JAMB Biology: genetics, 10 questions',
+    placeholder: 'e.g. JAMB Biology: genetics, ecology and cell biology',
     system:
-      'Task: create practice questions on the subject/topic given (WAEC/JAMB/NECO style if mentioned, otherwise university level). Give 10 multiple-choice questions with options A-D, then ## Answers with a one-line explanation each, then ## Topics to revise. Accurate and syllabus-appropriate.',
+      'Task: create practice questions on the subject/topic given (WAEC/JAMB/NECO style if mentioned, otherwise university level). Give 20 multiple-choice questions with options A-D, then ## Answers with a one-line explanation each, then ## Topics to revise. Accurate and syllabus-appropriate.',
   },
   cv: {
     name: 'CV & cover letter',
@@ -133,59 +133,94 @@ function demoAnswer(tool: AiToolId, input: string): string {
  * Run an AI helper and pay for it in G$ from the user's jars (AI jar first).
  * Charges only after a real answer comes back.
  */
-export async function runAiTool(user: User, tool: AiToolId, input: string): Promise<{ ok: boolean; output: string; costGd: number; demo: boolean; message?: string }> {
+export async function runAiTool(user: User, tool: AiToolId, input: string, requestId: string): Promise<{ ok: boolean; output: string; costGd: number; demo: boolean; message?: string }> {
+  if (tool === 'exam') {
+    try {
+      const { createExam } = await import('./exams')
+      const result = await createExam(user, input, requestId)
+      return { ok: true, output: `Your 20-question practice session is ready. Choose your answers one at a time, then see your score and explanations.\n\nOpen exam prep: ${serverConfig().appUrl}/app/exam?run=${result.id}`, costGd: result.costGd, demo: false }
+    } catch (err) {
+      return { ok: false, output: '', costGd: 0, demo: false, message: err instanceof Error ? err.message : 'Could not prepare your practice.' }
+    }
+  }
   const spec = AI_TOOLS[tool]
   const text = input.trim().slice(0, 2000)
   if (text.length < 3) return { ok: false, output: '', costGd: 0, demo: false, message: 'Tell me a bit more first.' }
-  const cost = parseEther(String(spec.priceGd))
-
-  return withUserLock(user.id, async () => {
-    await syncJars(user)
-    if ((await gdBalance(user.agentAddress)) < cost) {
-      return { ok: false, output: '', costGd: 0, demo: false, message: `This costs G$ ${spec.priceGd}. Your jars will fill as Jara claims your daily G$.` }
-    }
-
-    if (!(await llmReachable())) {
-      if (serverConfig().chain.mode !== 'mock') return { ok: false, output: '', costGd: 0, demo: false, message: 'The AI brain is offline right now. You were not charged — try again soon.' }
-      const output = demoAnswer(tool, text)
-      await run('INSERT INTO ai_runs (user_id, tool, input, output, cost_gd, demo, created_at) VALUES (?, ?, ?, ?, 0, 1, ?)', [user.id, tool, text, output, Date.now()])
-      return { ok: true, output, costGd: 0, demo: true }
-    }
-
-    let output: string
-    try {
-      const msg = await chat(
-        [
-          { role: 'system', content: `${AI_BASE_PROMPT}\n\n${spec.system}` },
-          { role: 'user', content: text },
-        ],
-        [],
-        spec.maxTokens,
-      )
-      output = (msg.content ?? '').trim()
-      if (!output) throw new Error('empty answer')
-    } catch (err) {
-      console.error('[ai-tools] LLM failed', err)
-      return { ok: false, output: '', costGd: 0, demo: false, message: 'The AI brain didn’t answer. You were not charged.' }
-    }
-
-    // Pay: AI jar first, then spare G$, then other jars.
-    if (!(await debitJars(user, 'ai', cost))) return { ok: false, output: '', costGd: 0, demo: false, message: 'Not enough G$.' }
-    let hash: string | undefined
-    try {
-      hash = await sendGdFromAgent(decryptAgentKey(user.agentKeyEnc), treasuryAddress(), cost)
-    } catch (err) {
-      console.error('[ai-tools] G$ payment failed after answer', user.id, err)
-    }
-    await run('INSERT INTO ai_runs (user_id, tool, input, output, cost_gd, demo, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)', [user.id, tool, text, output, spec.priceGd, Date.now()])
-    await logActivity(user.id, {
-      type: 'ai',
-      jar: 'ai',
-      amountWei: cost.toString(),
-      txHash: hash,
-      title: `${spec.name}: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`,
-      detail: `Paid G$ ${Number(formatEther(cost)).toLocaleString()} from your AI jar`,
-    })
-    return { ok: true, output, costGd: spec.priceGd, demo: false }
+  const result = await runPaidJob(user, {
+    requestId,
+    tool,
+    title: `${spec.name}: ${text.slice(0, 60)}`,
+    input: text,
+    priceGd: spec.priceGd,
+    produce: async () => {
+      const msg = await chat([{ role: 'system', content: `${AI_BASE_PROMPT}\n\n${spec.system}` }, { role: 'user', content: text }], [], spec.maxTokens)
+      return msg.content
+    },
   })
+  if (result.ok) return { ...result, demo: false }
+  if (result.reason === 'offline' && serverConfig().chain.mode === 'mock') return { ok: true, output: demoAnswer(tool, text), costGd: 0, demo: true }
+  return { ok: false, output: '', costGd: 0, demo: false, message: result.reason === 'failed' ? 'The payment failed without transferring G$. Start a new request to try again.' : result.reason === 'funds' ? 'Not enough G$ in your AI jar. Move money into it first.' : result.reason === 'payment' ? 'Payment is not confirmed. Retry this same request to check it.' : 'The AI helper is unavailable. No payment was started.' }
+}
+
+interface PaidJobData {
+  type: 'ai-job'
+  tool: AiToolId
+  title: string
+  input: string
+  priceGd: number
+  output: string
+}
+
+/** Save the answer before charging; never regenerate or charge again on a retry. */
+export async function runPaidJob(
+  user: User,
+  job: { requestId: string; tool: AiToolId; title: string; input: string; priceGd: number; produce: () => Promise<string | null> },
+): Promise<{ ok: true; output: string; costGd: number } | { ok: false; reason: 'funds' | 'offline' | 'empty' | 'payment' | 'failed' }> {
+  return withUserLock(user.id, async () => {
+    const request = await moneyRequest<PaidJobData>(user.id, `ai-job:${job.requestId}`, { tool: job.tool, input: job.input, priceGd: job.priceGd })
+    if (request.result) return request.result
+    if (!request.data) {
+      await syncJars(user)
+      const jar = (await getJars(user.id)).find((j) => j.kind === 'ai')!
+      if (jar.balanceWei < parseEther(String(job.priceGd))) return { ok: false, reason: 'funds' }
+      if (!(await llmReachable())) return { ok: false, reason: 'offline' }
+      let output: string | null
+      try { output = (await job.produce())?.trim() || null } catch { return { ok: false, reason: 'offline' } }
+      if (!output) return { ok: false, reason: 'empty' }
+      request.data = { type: 'ai-job', tool: job.tool, title: job.title, input: job.input, priceGd: job.priceGd, output }
+      await request.save(request.data)
+    }
+    return finishPaidJob(user, request.id, request.data)
+  })
+}
+
+async function finishPaidJob(user: User, id: string, data: PaidJobData): Promise<{ ok: true; output: string; costGd: number } | { ok: false; reason: 'payment' | 'failed' }> {
+  const cost = parseEther(String(data.priceGd))
+  let hash: string
+  try { hash = (await spendGd(user, cost, { id, jar: 'ai' })).hash } catch (err) {
+    if (err instanceof PaymentFailedError) {
+      const result = { ok: false as const, reason: 'failed' as const }
+      await run('UPDATE money_requests SET result = ? WHERE id = ?', [JSON.stringify(result), id])
+      return result
+    }
+    console.warn('[ai] payment not confirmed', id, err instanceof Error ? err.message : err)
+    return { ok: false, reason: 'payment' }
+  }
+  const result = { ok: true as const, output: data.output, costGd: data.priceGd }
+  await atomic(async (tx) => {
+    const saved = (await tx.execute({ sql: 'SELECT result FROM money_requests WHERE id = ?', args: [id] })).rows[0]
+    if (saved.result) return
+    await tx.execute({ sql: 'INSERT INTO ai_runs(user_id, tool, input, output, cost_gd, demo, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)', args: [user.id, data.tool, data.input, data.output, data.priceGd, Date.now()] })
+    await tx.execute({ sql: `INSERT INTO activity(user_id, type, jar, amount_wei, tx_hash, title, detail, operation_id, created_at) VALUES (?, 'ai', 'ai', ?, ?, ?, ?, ?, ?)`, args: [user.id, String(cost), hash, data.title, `Paid G$ ${formatEther(cost)} from your AI jar`, id, Date.now()] })
+    await tx.execute({ sql: 'UPDATE money_requests SET result = ? WHERE id = ?', args: [JSON.stringify(result), id] })
+  })
+  return result
+}
+
+export async function recoverPaidJobs(user: User) {
+  const rows = (await run("SELECT * FROM money_requests WHERE user_id = ? AND result IS NULL AND data IS NOT NULL AND id LIKE ?", [user.id, `${user.id}:ai-job:%`])).rows
+  for (const row of rows) {
+    const data = JSON.parse(String(row.data)) as PaidJobData
+    if (data.type === 'ai-job') await withUserLock(user.id, () => finishPaidJob(user, String(row.id), data))
+  }
 }

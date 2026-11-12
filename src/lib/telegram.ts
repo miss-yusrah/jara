@@ -49,9 +49,9 @@ export function botLink(linkCode?: string) {
   return `https://t.me/${name}${linkCode ? `?start=${linkCode}` : ''}`
 }
 
-export const CONFIRM_KEYBOARD: Keyboard = [
+export const CONFIRM_KEYBOARD = (id: string): Keyboard => [
   [
-    { text: '✅ Pay it', callback_data: 'confirm' },
-    { text: '✖ Cancel', callback_data: 'cancel' },
+    { text: '✅ Pay it', callback_data: `confirm:${id}` },
+    { text: '✖ Cancel', callback_data: `cancel:${id}` },
   ],
 ]

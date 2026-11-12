@@ -12,8 +12,8 @@ export type ChainMode = 'celo' | 'mock'
 
 export function serverConfig() {
   const provider = process.env.TOPUP_PROVIDER || 'mock'
-  if (provider !== 'vtpass' && provider !== 'mock') {
-    throw new Error(`TOPUP_PROVIDER must be "vtpass" or "mock", got "${provider}"`)
+  if (provider !== 'vtpass' && provider !== 'falconpay' && provider !== 'mock') {
+    throw new Error(`TOPUP_PROVIDER must be "falconpay", "vtpass" or "mock", got "${provider}"`)
   }
   const chainMode: ChainMode = process.env.CHAIN_MODE === 'celo' ? 'celo' : 'mock'
   if (process.env.NODE_ENV === 'production' && chainMode === 'mock' && process.env.ALLOW_MOCK_IN_PROD !== 'true') {
@@ -32,6 +32,9 @@ export function serverConfig() {
       // Gas sent to an agent wallet when it runs low (in CELO).
       gasTopUpCelo: process.env.GAS_TOPUP_CELO || '0.02',
       minGasCelo: process.env.MIN_GAS_CELO || '0.005',
+      // true = the treasury pays CELO gas for agent wallets when the GoodDollar faucet can't.
+      // Off by default: the person adds CELO to their own Jara wallet.
+      sponsorGas: process.env.SPONSOR_GAS === 'true',
     },
     // AES key (64 hex chars) that encrypts per-user agent wallet keys at rest.
     walletSecret: process.env.WALLET_ENCRYPTION_KEY ?? '',
@@ -62,9 +65,16 @@ export function serverConfig() {
       botUsername: process.env.TELEGRAM_BOT_USERNAME ?? '',
       webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET ?? '',
     },
-    provider: provider as 'vtpass' | 'mock',
+    provider: provider as 'falconpay' | 'vtpass' | 'mock',
     // Bill payments only run with a real provider (or the local demo flag), never faked for testers.
     billsLive: provider !== 'mock' || process.env.DEMO_BILLS === 'true',
+    falconpay: {
+      apiKey: process.env.FALCONPAY_API_KEY ?? '',
+      // sk_live_ keys go to production, everything else to the sandbox.
+      live: (process.env.FALCONPAY_API_KEY ?? '').startsWith('sk_live_'),
+      baseUrl: (process.env.FALCONPAY_API_KEY ?? '').startsWith('sk_live_') ? 'https://payment.falconpay.ng/v1' : 'https://sandbox.falconpay.ng/v1',
+      webhookSecret: process.env.FALCONPAY_WEBHOOK_SECRET ?? '',
+    },
     vtpass: {
       env: vtpassEnv,
       baseUrl: vtpassEnv === 'live' ? 'https://vtpass.com/api' : 'https://sandbox.vtpass.com/api',
@@ -78,6 +88,14 @@ export function serverConfig() {
     },
     cronSecret: process.env.CRON_SECRET ?? '',
   }
+}
+
+/** Test phone numbers are only accepted when no real money can move. */
+export function testNumbersAllowed(): boolean {
+  const cfg = serverConfig()
+  if (cfg.provider === 'mock') return true
+  if (cfg.provider === 'vtpass') return cfg.vtpass.env === 'sandbox'
+  return !cfg.falconpay.live
 }
 
 export function isDemoMode(): boolean {

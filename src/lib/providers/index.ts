@@ -1,10 +1,12 @@
 import { serverConfig } from '@/lib/env'
+import { FalconPayProvider } from './falconpay'
 import { MockProvider } from './mock'
 import type { TopupProvider } from './types'
 import { VTPassProvider } from './vtpass'
 
 // Add ClubKonnectProvider / ReloadlyProvider here.
 const factories: Record<string, () => TopupProvider> = {
+  falconpay: () => new FalconPayProvider(),
   vtpass: () => new VTPassProvider(),
   mock: () => new MockProvider(),
 }

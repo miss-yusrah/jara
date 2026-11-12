@@ -76,12 +76,12 @@ export function TreasuryClient() {
 
   if (!key || !report) {
     return (
-      <main className="grid min-h-screen place-items-center bg-forest px-4">
-        <div className="w-full max-w-sm rounded-3xl border-[4px] border-ink bg-cream p-6 shadow-chunk-lg">
-          <span className="grid h-11 w-11 place-items-center rounded-xl border-[3px] border-ink bg-crest">
+      <main className="grid min-h-screen place-items-center bg-[#f7f8f2] px-4">
+        <div className="app-card w-full max-w-sm p-6">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#edf2e8] text-forest">
             <Icon name="coins" className="h-6 w-6" />
           </span>
-          <h1 className="mt-4 text-2xl font-extrabold">Jara treasury</h1>
+          <h1 className="mt-4 text-2xl font-bold">Jara treasury</h1>
           <p className="mt-1 text-sm font-semibold text-ink/60">Operator only. Enter the ADMIN_KEY from the server env.</p>
           <input
             type="password"
@@ -92,7 +92,7 @@ export function TreasuryClient() {
             className="mt-4 w-full rounded-xl border-2 border-ink/20 bg-white px-4 py-3 font-semibold outline-none focus:border-ink"
           />
           {error && <p className="mt-2 text-sm font-bold text-red-700">{error}</p>}
-          <button onClick={signIn} disabled={busy || !draftKey} className="press mt-4 w-full rounded-xl border-[3px] border-ink bg-mandarin py-3 font-extrabold shadow-chunk-sm disabled:opacity-50">
+          <button onClick={signIn} disabled={busy || !draftKey} className="app-button justify-center bg-forest text-cream hover:bg-forest-soft disabled:opacity-60 mt-4 w-full">
             {busy ? 'Checking…' : 'Open'}
           </button>
         </div>
@@ -104,16 +104,16 @@ export function TreasuryClient() {
   const pct = Math.min(100, antseed.recoupedPct ?? 0)
 
   return (
-    <main className="min-h-screen bg-cream pb-16">
-      <header className="border-b-[4px] border-ink bg-forest text-cream">
+    <main className="jara-app min-h-screen pb-16">
+      <header className="app-topbar">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
-          <p className="flex items-center gap-2 text-xl font-extrabold">
-            <span className="grid h-9 w-9 place-items-center rounded-xl border-[3px] border-ink bg-crest text-ink">
+          <p className="flex items-center gap-2 text-xl font-bold">
+            <span className="grid h-9 w-9 place-items-center rounded-[12px] bg-forest text-crest">
               <Icon name="coins" className="h-5 w-5" />
             </span>
             Treasury
           </p>
-          <button onClick={() => call(key)} className="rounded-full bg-cream/10 px-4 py-2 text-sm font-bold hover:bg-cream/20">
+          <button onClick={() => call(key)} className="app-button-secondary">
             {busy ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
@@ -121,11 +121,11 @@ export function TreasuryClient() {
 
       <div className="mx-auto grid max-w-5xl gap-6 px-4 pt-8 sm:px-6">
         {/* Recoup */}
-        <section className="overflow-hidden rounded-[2rem] border-[4px] border-ink bg-white shadow-chunk">
-          <div className="bg-mandarin px-6 py-5">
-            <p className="text-xs font-extrabold tracking-widest uppercase opacity-60">AntSeed: paid back by G$</p>
-            <p className="mt-1 text-4xl font-extrabold sm:text-5xl">{antseed.recoupedPct === null ? '—' : `${antseed.recoupedPct}%`}</p>
-            <div className="mt-4 h-4 overflow-hidden rounded-full border-[3px] border-ink bg-cream">
+        <section className="app-card overflow-hidden">
+          <div className="bg-[#edf2e8] px-6 py-5 text-forest">
+            <p className="text-xs font-bold tracking-widest uppercase opacity-60">AntSeed: paid back by G$</p>
+            <p className="mt-1 text-4xl font-bold sm:text-5xl">{antseed.recoupedPct === null ? '—' : `${antseed.recoupedPct}%`}</p>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-ink/8">
               <div className="h-full bg-forest transition-all" style={{ width: `${pct}%` }} />
             </div>
           </div>
@@ -138,8 +138,8 @@ export function TreasuryClient() {
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* AI usage */}
-          <section className="rounded-[2rem] border-[4px] border-ink bg-white p-6 shadow-chunk">
-            <h2 className="flex items-center gap-2 text-xl font-extrabold">
+          <section className="app-card p-6">
+            <h2 className="flex items-center gap-2 text-xl font-bold">
               <Icon name="sparkle" className="h-5 w-5" /> AI helpers
             </h2>
             <p className="mt-1 text-sm font-semibold text-ink/55">
@@ -151,7 +151,7 @@ export function TreasuryClient() {
                   <li key={t.tool} className="flex items-center justify-between rounded-xl bg-cream/70 px-4 py-2.5 text-sm">
                     <span className="font-bold">{t.name}</span>
                     <span className="font-semibold text-ink/60">
-                      {t.uses}× · <span className="font-extrabold text-ink">{gd(t.gd)}</span>
+                      {t.uses}× · <span className="font-bold text-ink">{gd(t.gd)}</span>
                     </span>
                   </li>
                 ))}
@@ -162,8 +162,8 @@ export function TreasuryClient() {
           </section>
 
           {/* Top-ups */}
-          <section className="rounded-[2rem] border-[4px] border-ink bg-white p-6 shadow-chunk">
-            <h2 className="flex items-center gap-2 text-xl font-extrabold">
+          <section className="app-card p-6">
+            <h2 className="flex items-center gap-2 text-xl font-bold">
               <Icon name="coins" className="h-5 w-5" /> USDC you’ve put into AntSeed
             </h2>
             <p className="mt-1 text-sm font-semibold text-ink/55">Log each deposit so you know what G$ owes you back.</p>
@@ -189,7 +189,7 @@ export function TreasuryClient() {
                     setNote('')
                   }
                 }}
-                className="press shrink-0 rounded-xl border-[3px] border-ink bg-crest px-4 font-extrabold shadow-chunk-sm disabled:opacity-50"
+                className="app-button-secondary shrink-0 disabled:opacity-50"
               >
                 Add
               </button>
@@ -199,7 +199,7 @@ export function TreasuryClient() {
               {antseed.topups.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-3 rounded-xl bg-cream/70 px-4 py-2.5 text-sm">
                   <span className="min-w-0">
-                    <span className="font-extrabold">{usd(t.amountUsd)}</span>
+                    <span className="font-bold">{usd(t.amountUsd)}</span>
                     <span className="ml-2 font-semibold text-ink/55">{new Date(t.createdAt).toLocaleDateString()}</span>
                     {t.note && <span className="ml-2 truncate font-semibold text-ink/55">· {t.note}</span>}
                   </span>
@@ -214,21 +214,21 @@ export function TreasuryClient() {
         </div>
 
         {/* Context */}
-        <section className="grid gap-4 rounded-[2rem] border-[4px] border-ink bg-forest p-6 text-cream shadow-chunk sm:grid-cols-3">
+        <section className="balance-card grid gap-4 sm:grid-cols-3">
           <div>
-            <p className="text-xs font-extrabold tracking-widest text-cream/50 uppercase">Bills paid with G$</p>
-            <p className="mt-1 text-2xl font-extrabold">{bills.count.toLocaleString()}</p>
+            <p className="text-xs font-bold tracking-widest text-cream/50 uppercase">Bills paid with G$</p>
+            <p className="mt-1 text-2xl font-bold">{bills.count.toLocaleString()}</p>
             <p className="text-sm font-semibold text-cream/60">
               {gd(bills.gd)} in · {ngn(bills.ngn)} out via VTpass
             </p>
           </div>
           <div>
-            <p className="text-xs font-extrabold tracking-widest text-cream/50 uppercase">G$ price</p>
-            <p className="mt-1 text-2xl font-extrabold">${rates.usdPerGd.toPrecision(3)}</p>
+            <p className="text-xs font-bold tracking-widest text-cream/50 uppercase">G$ price</p>
+            <p className="mt-1 text-2xl font-bold">${rates.usdPerGd.toPrecision(3)}</p>
             <p className="text-sm font-semibold text-cream/60">₦{rates.ngnPerGd.toPrecision(3)} per G$</p>
           </div>
           <div>
-            <p className="text-xs font-extrabold tracking-widest text-cream/50 uppercase">Check AntSeed spend</p>
+            <p className="text-xs font-bold tracking-widest text-cream/50 uppercase">Check AntSeed spend</p>
             <p className="mt-1 font-mono text-sm font-bold text-crest">antseed buyer metering</p>
             <p className="text-sm font-semibold text-cream/60">Shows tokens used and USDC settled per peer.</p>
           </div>
@@ -241,8 +241,8 @@ export function TreasuryClient() {
 function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="border-t-2 border-ink/10 px-6 py-4 sm:border-t-0">
-      <p className="text-xs font-extrabold tracking-widest text-ink/45 uppercase">{label}</p>
-      <p className="mt-1 text-2xl font-extrabold">{value}</p>
+      <p className="text-xs font-bold tracking-widest text-ink/45 uppercase">{label}</p>
+      <p className="mt-1 text-2xl font-bold">{value}</p>
       <p className="text-xs font-semibold text-ink/50">{sub}</p>
     </div>
   )

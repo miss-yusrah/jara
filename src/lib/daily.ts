@@ -1,6 +1,10 @@
 import { formatEther, parseEther } from 'viem'
 import { describeAction, payBill, prepareBill } from './bills'
-import { claimUbi, sendGdFromTreasury } from './chain'
+import { GasLowError, claimUbi, sendGdFromTreasury } from './chain'
+import { atomic, run } from './db'
+import { gdForCeloFee } from './price'
+import { authorizedUser } from './wallet-authorization'
+import { spendMode } from './spend'
 import { serverConfig } from './env'
 import { getJars, snapshot, syncJars, withUserLock } from './jars'
 import { isBillKind, listConnectedUsers, logActivity, updateUser, type User } from './users'
@@ -22,61 +26,93 @@ export interface DailyResult {
 }
 
 /** Claim today's UBI, fill the jars, pay any auto-pay bills that are ready. */
-export async function runDaily(user: User, opts: { force?: boolean } = {}): Promise<DailyResult> {
-  const today = lagosDay()
-  let claimed = 0n
-  let reward = 0n
-  let streak = user.streak
-  const lines: string[] = []
+export async function runDaily(user: User, _opts: { force?: boolean } = {}): Promise<DailyResult> {
+  void _opts // Replaying a daily claim is always idempotent, including forced runs.
+  return withUserLock(user.id, async () => {
+    user = await authorizedUser(user)
+    const today = lagosDay()
+    let claimed = 0n
+    let reward = 0n
+    let streak = user.streak
+    const lines: string[] = []
 
-  await withUserLock(user.id, async () => {
-    if (user.lastClaimDay !== today || opts.force) {
-      const result = await claimUbi(decryptAgentKey(user.agentKeyEnc))
-      if (result) {
-        claimed = result.amount
-        streak = user.lastClaimDay === lagosDay(-1) ? user.streak + 1 : user.lastClaimDay === today ? user.streak : 1
-        await updateUser(user.id, { streak, lastClaimDay: today })
-        await logActivity(user.id, { type: 'claim', amountWei: claimed.toString(), txHash: result.hash, title: `Claimed ${gd(claimed)} UBI` })
-        lines.push(`☀️ Claimed ${gd(claimed)} for you today.`)
+    await withUserLock(user.id, async () => {
+      if (user.lastClaimDay !== today) {
+        let result: Awaited<ReturnType<typeof claimUbi>> = null
+        let gasLow = false
+        let walletMode = false
+        try {
+          // Wallet mode: Jara fronts the CELO fee and takes it back from the claimed G$ (shown on the claim).
+          walletMode = (await spendMode(user)) === 'wallet'
+          result = await claimUbi(decryptAgentKey(user.agentKeyEnc), { sponsor: walletMode, operationId: `claim:${user.id}:${today}` })
 
-        const { streakDays, streakRewardGd } = serverConfig().rewards
-        if (streakDays > 0 && streak % streakDays === 0 && streakRewardGd > 0) {
-          try {
-            reward = parseEther(String(streakRewardGd))
-            const hash = await sendGdFromTreasury(user.agentAddress, reward)
-            await logActivity(user.id, { type: 'reward', amountWei: reward.toString(), txHash: hash, title: `${streak}-day streak bonus ${gd(reward)} 🔥` })
-            lines.push(`🔥 ${streak}-day streak! Bonus ${gd(reward)} added.`)
-          } catch (err) {
-            reward = 0n
-            console.error('[daily] streak reward failed', err)
-          }
+        } catch (err) {
+          if (!(err instanceof GasLowError)) throw err
+          gasLow = true
         }
-      } else {
-        await updateUser(user.id, { lastClaimDay: today })
+        if (gasLow) {
+          // Leave lastClaimDay alone so the next run claims as soon as there's gas. Tell them once a day.
+          const told = await run("SELECT 1 FROM activity WHERE user_id = ? AND title LIKE 'Couldn%claim%gas%' AND created_at > ? LIMIT 1", [user.id, Date.now() - 20 * 3_600_000])
+          if (told.rows.length === 0) {
+            await logActivity(user.id, { type: 'agent', status: 'failed', title: 'Couldn’t claim today: add gas', detail: 'Your Jara wallet needs a little CELO for the network fee. Open your profile and tap “Add gas”.' })
+            lines.push('⛽ I couldn’t claim your G$ today: your Jara wallet needs a little CELO for the network fee. Open your profile in the app and tap “Add gas”.')
+          }
+        } else if (result) {
+          claimed = result.amount
+          streak = user.lastClaimDay === lagosDay(-1) ? user.streak + 1 : user.lastClaimDay === today ? user.streak : 1
+          const feeGd = walletMode ? await gdForCeloFee(result.feeWei) : 0n
+          await atomic(async (tx) => {
+            await tx.execute({ sql: 'UPDATE users SET streak = ?, last_claim_day = ? WHERE id = ?', args: [streak, today, user.id] })
+            const logged = await tx.execute({ sql: `INSERT OR IGNORE INTO activity(user_id, type, amount_wei, tx_hash, title, detail, operation_id, created_at) VALUES (?, 'claim', ?, ?, ?, ?, ?, ?)`, args: [user.id, String(claimed), result!.hash, `Claimed ${gd(claimed)} UBI`, feeGd > 0n ? `Celo network fee ${gd(feeGd)}, repaid from your claimed G$` : null, `claim:${user.id}:${today}`, Date.now()] })
+            // Only the first time this claim is recorded, so a retried run never charges the fee twice.
+            if (logged.rowsAffected && feeGd > 0n) {
+              const row = (await tx.execute({ sql: 'SELECT gas_owed_wei FROM users WHERE id = ?', args: [user.id] })).rows[0]
+              await tx.execute({ sql: 'UPDATE users SET gas_owed_wei = ? WHERE id = ?', args: [String(BigInt(String(row?.gas_owed_wei ?? '0')) + feeGd), user.id] })
+            }
+          })
+          lines.push(`☀️ Claimed ${gd(claimed)} for you today.`)
+
+        } else {
+          await updateUser(user.id, { lastClaimDay: today })
+        }
+      }
+      const { streakDays, streakRewardGd } = serverConfig().rewards
+      if (streakDays > 0 && streak > 0 && streak % streakDays === 0 && streakRewardGd > 0 && (await run('SELECT 1 FROM activity WHERE operation_id = ?', [`claim:${user.id}:${today}`])).rows.length) {
+        const id = `streak:${user.id}:${today}`
+        const seen = await run('SELECT 1 FROM activity WHERE operation_id = ?', [id])
+        if (!seen.rows.length) {
+          try {
+            const amount = parseEther(String(streakRewardGd))
+            const hash = await sendGdFromTreasury(user.agentAddress, amount, id)
+            await run(`INSERT OR IGNORE INTO activity(user_id, type, amount_wei, tx_hash, title, operation_id, created_at) VALUES (?, 'reward', ?, ?, ?, ?, ?)`, [user.id, String(amount), hash, `${streak}-day streak bonus`, id, Date.now()])
+            reward = amount
+          } catch (err) { console.warn('[daily] reward awaiting confirmation', err) }
+        }
+      }
+      await syncJars(user)
+    })
+
+    // Auto-pay jars that reached their target.
+    const paid: string[] = []
+    for (const jar of await getJars(user.id)) {
+      // Jars with a known cadence are paid on their due date by the agent routine instead.
+      if (!serverConfig().billsLive || !isBillKind(jar.kind) || !jar.autoPay || jar.everyDays) continue
+      const view = (await snapshot(user)).jars.find((j) => j.kind === jar.kind)!
+      if (view.balanceNgn < jar.targetNgn || jar.targetNgn <= 0) continue
+      const prepared = await prepareBill(user, { kind: jar.kind, amountNgn: jar.targetNgn })
+      if ('error' in prepared) continue
+      prepared.action.id = `auto:${jar.kind}:${today}`
+      const res = await payBill(user, prepared.action)
+      if (res.ok && !res.pending) {
+        paid.push(describeAction(prepared.action))
+        lines.push(res.message)
       }
     }
-    await syncJars(user)
+
+    const snap = await snapshot(user)
+    lines.push(snap.jars.map((j) => `${j.emoji} ${j.label} ${j.pct}%`).join('  ·  '))
+    return { claimed, reward, streak, paid, message: lines.join('\n') }
   })
-
-  // Auto-pay jars that reached their target.
-  const paid: string[] = []
-  for (const jar of await getJars(user.id)) {
-    // Jars with a known cadence are paid on their due date by the agent routine instead.
-    if (!serverConfig().billsLive || !isBillKind(jar.kind) || !jar.autoPay || jar.everyDays) continue
-    const view = (await snapshot(user)).jars.find((j) => j.kind === jar.kind)!
-    if (view.balanceNgn < jar.targetNgn || jar.targetNgn <= 0) continue
-    const prepared = await prepareBill(user, { kind: jar.kind, amountNgn: jar.targetNgn })
-    if ('error' in prepared) continue
-    const res = await payBill(user, prepared.action)
-    if (res.ok) {
-      paid.push(describeAction(prepared.action))
-      lines.push(res.message)
-    }
-  }
-
-  const snap = await snapshot(user)
-  lines.push(snap.jars.map((j) => `${j.emoji} ${j.label} ${j.pct}%`).join('  ·  '))
-  return { claimed, reward, streak, paid, message: lines.join('\n') }
 }
 
 export async function runDailyForAll(notify: (user: User, text: string) => Promise<void>) {

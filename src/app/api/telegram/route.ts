@@ -9,7 +9,7 @@ import { createUser, getUserByLinkCode, getUserByTelegram, linkTelegram, rotateL
 export const dynamic = 'force-dynamic'
 
 interface Update {
-  message?: { chat: { id: number }; from?: { first_name?: string }; text?: string; voice?: unknown }
+  message?: { message_id: number; chat: { id: number }; from?: { first_name?: string }; text?: string; voice?: unknown }
   callback_query?: { id: string; data?: string; message?: { chat: { id: number }; message_id: number } }
 }
 
@@ -35,13 +35,17 @@ async function handle(update: Update) {
 
   if (update.callback_query) {
     const cb = update.callback_query
+    if (!/^(confirm|cancel):[a-zA-Z0-9-]+$/.test(cb.data ?? '')) {
+      await answerCallback(cb.id)
+      return
+    }
     const chatId = String(cb.message?.chat.id ?? '')
     const user = await getUserByTelegram(chatId)
     await answerCallback(cb.id)
     if (!user || !cb.message) return
     await editKeyboard(chatId, cb.message.message_id)
     await sendTyping(chatId)
-    const reply = await resolvePending(user.id, cb.data === 'confirm')
+    const reply = await resolvePending(user.id, cb.data?.startsWith('confirm:') ?? false, cb.data?.split(':')[1])
     await run('INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)', [user.id, 'assistant', reply.text, Date.now()])
     await sendMessage(chatId, reply.text + (reply.explorerUrl ? `\n\nReceipt: ${reply.explorerUrl}` : ''))
     return
@@ -61,12 +65,21 @@ async function handle(update: Update) {
       await sendMessage(chatId, `You're linked${linked.name ? `, ${linked.name}` : ''} 🙌 I'll message you here every morning after I claim your G$.\n\nTry: "How much is in my jars?"`)
       return
     }
-    let user = await getUserByTelegram(chatId)
-    user ??= await createUser({ name: msg.from?.first_name, tgChatId: chatId })
+    const existing = await getUserByTelegram(chatId)
+    if (existing?.connected) {
+      await sendMessage(chatId, `Welcome back${existing.name ? `, ${existing.name}` : ''} 👋 You're all set. Ask me anything, e.g. "How much is in my jars?"`, [
+        [{ text: 'Open Jara on the web', url: `${appUrl}/app?tg=${existing.linkCode}` }],
+      ])
+      return
+    }
+    const user = existing ?? (await createUser({ name: msg.from?.first_name, tgChatId: chatId }))
     await sendMessage(
       chatId,
-      `Hi${msg.from?.first_name ? ` ${msg.from.first_name}` : ''}! I'm Jara, your AI agent.\n\nEvery day I collect your GoodDollar and put it to work: I save it in jars, pay your airtime, data and light, find you G$ rewards, and pay for AI help with research, assignments and ideas.\n\nFirst, connect your GoodDollar account (takes 1 minute):`,
-      [[{ text: 'Set up Jara', url: `${appUrl}/app?tg=${user.linkCode}` }]],
+      `Hi${msg.from?.first_name ? ` ${msg.from.first_name}` : ''}! I'm Jara, your AI agent.\n\nEvery day I collect your GoodDollar and put it to work: I save it in jars, pay your airtime, data and light, find you G$ rewards, and pay for AI help with research, assignments and exams.\n\nNew to Jara? Tap "Set up Jara" to connect your GoodDollar account (about 3 minutes).\n\nAlready using Jara on the website? Don't set up again. Open usejara.xyz/app, tap "Also use Telegram" in Getting started (or "Add Telegram" by the agent log), and I'll link to your existing account.`,
+      [
+        [{ text: 'Set up Jara', url: `${appUrl}/app?tg=${user.linkCode}` }],
+        [{ text: 'I already use Jara on the web', url: `${appUrl}/app` }],
+      ],
     )
     return
   }
@@ -82,6 +95,7 @@ async function handle(update: Update) {
   }
   if (!text) return
   await sendTyping(chatId)
-  const reply = await handleMessage(user.id, text)
-  await sendMessage(chatId, reply.text, reply.confirm ? CONFIRM_KEYBOARD : undefined)
+  const reply = await handleMessage(user.id, text, `telegram:${chatId}:${msg.message_id}`)
+  await sendMessage(chatId, reply.text, reply.confirm ? CONFIRM_KEYBOARD(reply.confirm.id) : undefined)
+  for (const m of reply.extra ?? []) await sendMessage(chatId, m)
 }

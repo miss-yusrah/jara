@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { clientRequest } from '@/lib/client-request'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon, type IconName } from './Icon'
 import { Markdown } from './Markdown'
@@ -47,6 +49,7 @@ const TOOL_ICON: Record<string, IconName> = {
 const gd = (n: number) => Math.floor(n).toLocaleString()
 
 export function AiChat() {
+  const router = useRouter()
   const [home, setHome] = useState<Home | null | 'signed-out'>(null)
   const [chatId, setChatId] = useState<string | null>(null)
   const [toolId, setToolId] = useState('research')
@@ -58,6 +61,8 @@ export function AiChat() {
   const [toast, setToast] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [hasRetry, setHasRetry] = useState(false)
+  const retry = useRef<{ text: string; chatId: string | null; tool: string } | null>(null)
 
   const flash = (t: string) => {
     setToast(t)
@@ -73,10 +78,11 @@ export function AiChat() {
   useEffect(() => {
     // Initial data load, plus an optional ?tool= preset from the dashboard shortcuts.
     const preset = new URLSearchParams(window.location.search).get('tool')
+    if (preset === 'exam') { router.replace('/app/exam'); return }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (preset) setToolId(preset)
     void loadHome()
-  }, [loadHome])
+  }, [loadHome, router])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -94,6 +100,7 @@ export function AiChat() {
   }
 
   const newChat = (tool?: string) => {
+    if (tool === 'exam') { router.push('/app/exam'); return }
     setDrawer(false)
     setChatId(null)
     setMessages([])
@@ -109,6 +116,7 @@ export function AiChat() {
   }
 
   const send = async () => {
+    if (toolId === 'exam' && !chatId) { router.push(`/app/exam?topic=${encodeURIComponent(input)}`); return }
     const text = input.trim()
     if (!text || busy || typeof home !== 'object' || !home) return
     setBusy(true)
@@ -117,11 +125,20 @@ export function AiChat() {
     const tempUser: Msg = { id: `u${Date.now()}`, role: 'user', content: text, costGd: 0 }
     const tempAi: Msg = { id: `a${Date.now()}`, role: 'assistant', content: '', costGd: 0, pending: true }
     setMessages((m) => [...m, tempUser, tempAi])
+    if (!retry.current) {
+      try { retry.current = JSON.parse(window.sessionStorage.getItem('jara:ai-retry') ?? 'null') } catch { /* unavailable */ }
+    }
+    const original = retry.current?.text === text && retry.current.tool === toolId ? retry.current : { text, chatId, tool: toolId }
+    retry.current = original
+    setHasRetry(true)
+    try { window.sessionStorage.setItem('jara:ai-retry', JSON.stringify(original)) } catch { /* unavailable */ }
+    const request = clientRequest('ai-chat', original)
+    let completed = false
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId, tool: toolId, text }),
+        body: JSON.stringify({ ...original, requestId: request.id }),
       })
       if (!res.ok || !res.body) {
         const j = (await res.json().catch(() => ({}))) as { error?: string }
@@ -140,15 +157,29 @@ export function AiChat() {
           const line = buf.slice(0, nl)
           buf = buf.slice(nl + 1)
           if (!line.trim()) continue
-          const ev = JSON.parse(line) as { t: string; v?: string; chatId?: string; messageId?: number; costGd?: number; message?: string; demo?: boolean }
+          const ev = JSON.parse(line) as { t: string; v?: string; chatId?: string; messageId?: number; costGd?: number; message?: string; demo?: boolean; terminal?: boolean }
           if (ev.t === 'chat' && ev.chatId) setChatId(ev.chatId)
           else if (ev.t === 'delta' && ev.v) setMessages((m) => m.map((x) => (x.id === tempAi.id ? { ...x, content: x.content + ev.v } : x)))
-          else if (ev.t === 'done')
+          else if (ev.t === 'done') {
+            completed = true
+            request.finish()
+            retry.current = null
+            setHasRetry(false)
+            try { window.sessionStorage.removeItem('jara:ai-retry') } catch { /* unavailable */ }
             setMessages((m) => m.map((x) => (x.id === tempAi.id ? { ...x, id: ev.messageId ?? x.id, costGd: ev.costGd ?? 0, pending: false } : x)))
-          else if (ev.t === 'error') failed = ev.message ?? 'Something went wrong'
+          } else if (ev.t === 'error') {
+            failed = ev.message ?? 'Something went wrong'
+            if (ev.terminal) {
+              request.finish()
+              retry.current = null
+              setHasRetry(false)
+              try { window.sessionStorage.removeItem('jara:ai-retry') } catch { /* unavailable */ }
+            }
+          }
         }
       }
       if (failed) throw new Error(failed)
+      if (!completed) throw new Error('The connection ended before confirmation. Retry to check the same request.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
       setMessages((m) => m.filter((x) => x.id !== tempAi.id && x.id !== tempUser.id))
@@ -163,13 +194,13 @@ export function AiChat() {
   if (home === 'signed-out' || !home.user.connected) {
     return (
       <main className="grid min-h-dvh place-items-center bg-forest px-4">
-        <div className="w-full max-w-md rounded-3xl border-[4px] border-ink bg-cream p-7 text-center shadow-chunk-lg">
-          <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border-[3px] border-ink bg-crest">
+        <div className="app-card w-full max-w-md p-7 text-center">
+          <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#edf2e8] text-forest">
             <Icon name="sparkle" className="h-7 w-7" />
           </span>
-          <h1 className="mt-4 text-3xl font-extrabold">Jara AI</h1>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight">Jara AI</h1>
           <p className="mt-2 font-semibold text-ink/65">Set up Jara first. It takes a minute, then your G$ pays for research, assignments and more.</p>
-          <Link href="/app" className="press mt-6 inline-flex rounded-2xl border-[3px] border-ink bg-mandarin px-6 py-3 font-extrabold shadow-chunk-sm">
+          <Link href="/app" className="app-button justify-center bg-forest text-cream hover:bg-forest-soft disabled:opacity-60 mt-6">
             Set up Jara →
           </Link>
         </div>
@@ -180,12 +211,12 @@ export function AiChat() {
   const tool = home.tools.find((t) => t.id === toolId) ?? home.tools[0]
   const isFollowUp = messages.some((m) => m.role === 'assistant' && !m.pending)
   const price = isFollowUp ? tool.followUpGd : tool.priceGd
-  const canAfford = home.balanceGd >= price
+  const canAfford = home.aiJarGd >= price || hasRetry
 
   const sidebar = (
     <div className="flex h-full flex-col bg-forest text-cream">
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
-        <Link href="/app" className="flex items-center gap-2 font-extrabold">
+        <Link href="/app" className="flex items-center gap-2 font-bold">
           <span className="grid h-8 w-8 place-items-center rounded-lg border-2 border-ink bg-crest text-ink">
             <Icon name="jar" className="h-4.5 w-4.5" />
           </span>
@@ -200,7 +231,7 @@ export function AiChat() {
           <Icon name="plus" className="h-4 w-4" /> New chat
         </button>
       </div>
-      <p className="px-4 pt-5 pb-2 text-[11px] font-extrabold tracking-widest text-cream/40 uppercase">Your chats</p>
+      <p className="px-4 pt-5 pb-2 text-[11px] font-bold tracking-widest text-cream/40 uppercase">Your chats</p>
       <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {home.chats.map((c) => (
           <li key={c.id} className="group relative">
@@ -219,8 +250,8 @@ export function AiChat() {
         {!home.chats.length && <li className="px-3 py-2 text-sm font-semibold text-cream/40">No chats yet.</li>}
       </ul>
       <div className="border-t border-cream/10 p-4">
-        <p className="text-[11px] font-extrabold tracking-widest text-cream/40 uppercase">Your G$</p>
-        <p className="mt-0.5 text-xl font-extrabold text-crest">G$ {gd(home.balanceGd)}</p>
+        <p className="text-[11px] font-bold tracking-widest text-cream/40 uppercase">Your AI jar</p>
+        <p className="mt-0.5 text-xl font-bold text-crest">G$ {gd(home.aiJarGd)}</p>
         <p className="text-xs font-semibold text-cream/50">Fills every day as Jara claims your G$</p>
         <Link href="/app" className="mt-3 inline-flex items-center gap-1.5 text-sm font-bold text-cream/70 hover:text-cream">
           <Icon name="undo" className="h-4 w-4" /> Back to my jars
@@ -230,31 +261,31 @@ export function AiChat() {
   )
 
   return (
-    <div className="flex h-dvh bg-cream">
+    <div className="jara-app flex h-dvh">
       {/* Sidebar */}
-      <aside className="hidden w-72 shrink-0 border-r-[3px] border-ink lg:block">{sidebar}</aside>
+      <aside className="hidden w-72 shrink-0 border-r border-ink/10 lg:block">{sidebar}</aside>
       {drawer && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <button className="absolute inset-0 bg-ink/50" onClick={() => setDrawer(false)} aria-label="Close menu" />
-          <aside className="absolute inset-y-0 left-0 w-[82%] max-w-xs border-r-[3px] border-ink">{sidebar}</aside>
+          <aside className="absolute inset-y-0 left-0 w-[82%] max-w-xs border-r border-ink/10">{sidebar}</aside>
         </div>
       )}
 
       {/* Main */}
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-3 border-b-2 border-ink/10 bg-cream px-4 py-3">
+        <header className="flex items-center justify-between gap-3 border-b border-ink/10 bg-white px-4 py-4">
           <div className="flex min-w-0 items-center gap-2">
             <button onClick={() => setDrawer(true)} className="rounded-lg p-1.5 hover:bg-ink/5 lg:hidden" aria-label="Open menu">
               <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
                 <path d="M4 7h16M4 12h16M4 17h16" />
               </svg>
             </button>
-            <span className="flex items-center gap-2 rounded-full bg-forest px-3 py-1.5 text-sm font-extrabold text-cream">
+            <span className="flex items-center gap-2 rounded-full bg-forest px-3 py-1.5 text-sm font-bold text-cream">
               <Icon name={TOOL_ICON[tool.id] ?? 'sparkle'} className="h-4 w-4 text-crest" /> {tool.name}
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="rounded-full border-2 border-ink bg-crest px-3 py-1 text-sm font-extrabold">G$ {gd(home.balanceGd)}</span>
+            <Link href="/app#overview" className="rounded-full bg-[#e5eddc] px-3 py-2 text-xs font-bold text-forest" aria-label="Manage your AI jar">AI jar · G$ {gd(home.aiJarGd)}</Link>
             <button onClick={() => newChat()} className="rounded-lg p-1.5 hover:bg-ink/5 lg:hidden" aria-label="New chat">
               <Icon name="plus" className="h-5 w-5" />
             </button>
@@ -264,28 +295,29 @@ export function AiChat() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           {messages.length === 0 ? (
             <div className="mx-auto max-w-3xl px-4 pt-10 pb-6 sm:pt-16">
-              <h1 className="text-center text-3xl leading-tight font-extrabold tracking-tight sm:text-5xl">
-                What do you need <span className="rounded-xl bg-mandarin px-2">help</span> with?
+              <h1 className="mx-auto max-w-xl text-center text-3xl leading-tight font-bold tracking-[-0.045em] sm:text-4xl">
+                A little help with your next big idea.
               </h1>
-              <p className="mt-3 text-center font-semibold text-ink/60">Pick a helper and ask. Your G$ pays for it, and every answer downloads as a PDF.</p>
+              <p className="mt-3 text-center font-semibold text-ink/60">Pick a helper. Pay from your AI jar. Keep your answer as a PDF.</p>
               <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {home.tools.map((t) => (
                   <button
                     key={t.id}
                     onClick={() => {
+                      if (t.id === 'exam') { router.push('/app/exam'); return }
                       setToolId(t.id)
                       inputRef.current?.focus()
                     }}
-                    className={`press flex flex-col rounded-2xl border-[3px] p-3.5 text-left transition ${
-                      t.id === tool.id ? 'border-ink bg-forest text-cream shadow-chunk-sm' : 'border-ink/15 bg-white hover:border-ink'
+                    className={`flex flex-col rounded-2xl border p-3.5 text-left transition ${
+                      t.id === tool.id ? 'border-forest bg-forest text-cream' : 'border-ink/15 bg-white hover:border-ink'
                     }`}
                   >
-                    <span className={`grid h-9 w-9 place-items-center rounded-xl border-2 border-ink ${t.id === tool.id ? 'bg-crest text-ink' : 'bg-cream'}`}>
+                    <span className={`grid h-9 w-9 place-items-center rounded-xl ${t.id === tool.id ? 'bg-crest text-ink' : 'bg-cream'}`}>
                       <Icon name={TOOL_ICON[t.id] ?? 'sparkle'} className="h-5 w-5" />
                     </span>
-                    <span className="mt-3 leading-tight font-extrabold">{t.name}</span>
+                    <span className="mt-3 leading-tight font-bold">{t.name}</span>
                     <span className={`mt-1 line-clamp-2 text-xs font-semibold ${t.id === tool.id ? 'text-cream/70' : 'text-ink/55'}`}>{t.blurb}</span>
-                    <span className={`mt-2 text-xs font-extrabold ${t.id === tool.id ? 'text-crest' : 'text-mandarin'}`}>G$ {t.priceGd}</span>
+                    <span className={`mt-2 text-xs font-bold ${t.id === tool.id ? 'text-crest' : 'text-mandarin'}`}>G$ {t.priceGd}</span>
                   </button>
                 ))}
               </div>
@@ -314,7 +346,7 @@ export function AiChat() {
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <a
                             href={`/api/ai/pdf/${m.id}`}
-                            className="press inline-flex items-center gap-1.5 rounded-xl border-[2.5px] border-ink bg-mandarin px-3 py-1.5 text-sm font-extrabold shadow-chunk-sm"
+                            className="app-button-secondary min-h-9 px-3 py-1.5 text-xs"
                           >
                             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                               <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
@@ -340,10 +372,10 @@ export function AiChat() {
         </div>
 
         {/* Composer */}
-        <div className="border-t-2 border-ink/10 bg-cream px-4 pt-3 pb-4">
+        <div className="border-t border-ink/10 bg-[#f7f8f2] px-4 pt-3 pb-4">
           <div className="mx-auto max-w-3xl">
             {error && <p className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-800">{error}</p>}
-            <div className="rounded-3xl border-[3px] border-ink bg-white shadow-chunk-sm focus-within:shadow-chunk">
+            <div className="rounded-2xl border border-ink/20 bg-white focus-within:ring-2 focus-within:ring-forest/30">
               <textarea
                 ref={inputRef}
                 value={input}
@@ -359,16 +391,17 @@ export function AiChat() {
                   }
                 }}
                 rows={1}
+                aria-label="Your question"
                 placeholder={isFollowUp ? 'Ask a follow-up…' : tool.placeholder}
                 className="block max-h-56 w-full resize-none rounded-3xl bg-transparent px-5 pt-4 pb-2 text-[15.5px] font-medium outline-none placeholder:text-ink/40"
               />
-              <div className="flex items-center justify-between gap-2 px-3 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-3">
                 {isFollowUp || chatId ? (
                   <span className="pl-2 text-xs font-bold text-ink/45">{tool.name} · follow-ups G$ {tool.followUpGd}</span>
                 ) : (
                   <select
                     value={tool.id}
-                    onChange={(e) => setToolId(e.target.value)}
+                    onChange={(e) => { if (e.target.value === 'exam') router.push('/app/exam'); else setToolId(e.target.value) }}
                     className="rounded-full border-2 border-ink/15 bg-cream px-3 py-1.5 text-sm font-bold outline-none"
                     aria-label="Helper"
                   >
@@ -382,7 +415,7 @@ export function AiChat() {
                 <button
                   onClick={send}
                   disabled={busy || !input.trim() || !canAfford}
-                  className="press flex items-center gap-2 rounded-full border-[2.5px] border-ink bg-mandarin px-4 py-2 text-sm font-extrabold disabled:opacity-40"
+                  className="flex items-center gap-2 rounded-xl bg-forest px-4 py-2.5 text-sm font-bold text-cream disabled:opacity-40"
                 >
                   {busy ? 'Thinking…' : `Ask · G$ ${price}`}
                   <Icon name="arrow" className="h-4 w-4" strokeWidth={2.75} />

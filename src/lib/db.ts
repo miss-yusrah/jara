@@ -1,11 +1,35 @@
-import { mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
-import { createClient, type Client, type InValue } from '@libsql/client'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { createClient, type Client, type InValue, type Transaction } from '@libsql/client'
 import { serverConfig } from './env'
 
 // SQLite locally (file:data/jara.db), Turso/libSQL in production.
 // G$ amounts are stored as wei strings (18 decimals on Celo).
 const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS exam_attempts (
+    run_id INTEGER PRIMARY KEY REFERENCES ai_runs(id), user_id TEXT NOT NULL REFERENCES users(id),
+    answers TEXT NOT NULL DEFAULT '[]', current_question INTEGER NOT NULL DEFAULT 0,
+    submitted_at INTEGER, revision INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS wallet_bindings (root_address TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE IF NOT EXISTS money_locks (id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS chain_transactions (
+    id TEXT PRIMARY KEY, sender TEXT NOT NULL, intent TEXT NOT NULL,
+    raw TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'pending',
+    fee_wei TEXT NOT NULL DEFAULT '0', created_at INTEGER NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS chain_sender_pending ON chain_transactions(sender) WHERE status = 'pending'`,
+  `CREATE TABLE IF NOT EXISTS payments (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, jar TEXT NOT NULL, amount_wei TEXT NOT NULL,
+    source TEXT NOT NULL, refund_address TEXT NOT NULL, fees_wei TEXT NOT NULL DEFAULT '0',
+    status TEXT NOT NULL DEFAULT 'reserved', tx_hash TEXT, refund_hash TEXT, created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS money_requests (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+    data TEXT, result TEXT, created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS bill_notices (activity_id INTEGER PRIMARY KEY, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT,
@@ -105,6 +129,26 @@ const SCHEMA = [
   )`,
   // Simulated balances for CHAIN_MODE=mock.
   `CREATE TABLE IF NOT EXISTS mock_balances (address TEXT PRIMARY KEY, wei TEXT NOT NULL)`,
+  // Proactive jobs the user switched on: daily exam drills, opportunity scout, verification reminders.
+  `CREATE TABLE IF NOT EXISTS agent_jobs (
+    user_id TEXT PRIMARY KEY REFERENCES users (id),
+    exam_on INTEGER NOT NULL DEFAULT 0,
+    exam TEXT,
+    exam_subjects TEXT NOT NULL DEFAULT '[]',
+    exam_date TEXT,
+    exam_last_day TEXT,
+    exam_count INTEGER NOT NULL DEFAULT 0,
+    scout_on INTEGER NOT NULL DEFAULT 0,
+    scout_interests TEXT,
+    scout_last_at INTEGER,
+    verify_warned_at INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS scout_seen (
+    user_id TEXT NOT NULL REFERENCES users (id),
+    link TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, link)
+  )`,
 ]
 
 const globalForDb = globalThis as typeof globalThis & { __jaraDb?: Promise<Client> }
@@ -133,6 +177,14 @@ async function connect(): Promise<Client> {
     'CREATE UNIQUE INDEX IF NOT EXISTS users_ref_code_idx ON users (ref_code)',
     'ALTER TABLE jars ADD COLUMN every_days INTEGER',
     'ALTER TABLE jars ADD COLUMN last_paid_at INTEGER',
+    // Bill payments still processing at the provider, so they can be settled later.
+    'ALTER TABLE activity ADD COLUMN provider TEXT',
+    'ALTER TABLE activity ADD COLUMN provider_ref TEXT',
+    // Network fees Jara paid in CELO for this person, owed back in G$ (wei).
+    "ALTER TABLE users ADD COLUMN gas_owed_wei TEXT NOT NULL DEFAULT '0'",
+    'CREATE INDEX IF NOT EXISTS activity_provider_ref_idx ON activity (provider_ref)',
+    'ALTER TABLE activity ADD COLUMN operation_id TEXT',
+    'CREATE UNIQUE INDEX IF NOT EXISTS activity_operation_idx ON activity(operation_id)',
   ]) {
     try {
       await client.execute(sql)
@@ -140,9 +192,72 @@ async function connect(): Promise<Client> {
       /* column already exists */
     }
   }
+  await leaveDemoMode(client, url)
   return client
 }
 
+/**
+ * Runs once, the first time the app starts with CHAIN_MODE=celo on a database
+ * that was used in demo mode. Demo balances, claims, rewards and "connections"
+ * were simulated, so they're cleared: otherwise real treasury G$ could be paid
+ * out for demo activity (weekly saver, first AI, referrals), and demo users
+ * would look connected without an on-chain link. Accounts, chats and settings stay.
+ */
+async function leaveDemoMode(client: Client, url: string) {
+  await client.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+  const mode = serverConfig().chain.mode
+  const stored = (await client.execute("SELECT value FROM meta WHERE key = 'chain_mode'")).rows[0]?.value as string | undefined
+  if (mode !== 'celo') {
+    if (!stored) await client.execute({ sql: "INSERT INTO meta (key, value) VALUES ('chain_mode', ?)", args: [mode] })
+    return
+  }
+  if (stored === 'celo') return
+  if (url.startsWith('file:')) {
+    const file = url.slice('file:'.length)
+    if (existsSync(file)) copyFileSync(file, `${file}.demo-backup-${Date.now()}`)
+  }
+  await client.batch(
+    [
+      'UPDATE users SET connected = 0, root_address = NULL, streak = 0, last_claim_day = NULL, pending_action = NULL',
+      "UPDATE jars SET balance_wei = '0', last_paid_at = NULL",
+      'DELETE FROM activity',
+      'DELETE FROM rewards_paid',
+      'DELETE FROM mock_balances',
+      // Demo joins were logged on-chain as demo; let real connections be logged again as real.
+      "DELETE FROM telemetry_sent WHERE id LIKE 'join:%'",
+      'UPDATE ai_runs SET demo = 1',
+      "INSERT INTO meta (key, value) VALUES ('chain_mode', 'celo') ON CONFLICT (key) DO UPDATE SET value = 'celo'",
+    ],
+    'write',
+  )
+  console.warn('[jara] switched to CHAIN_MODE=celo: demo balances, activity and connections cleared')
+}
+
 export async function run(sql: string, args: InValue[] = []) {
+  if (moneyLockContext.getStore()?.size && !/^\s*SELECT\b/i.test(sql)) {
+    return atomic((tx) => tx.execute({ sql, args }))
+  }
   return (await db()).execute({ sql, args })
+}
+
+// Every ledger write checks lease ownership inside the same database transaction.
+// A worker that resumes after losing its lease cannot mutate the ledger.
+export const moneyLockContext = new AsyncLocalStorage<Map<string, string>>()
+
+export async function atomic<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  const tx = await (await db()).transaction('write')
+  try {
+    for (const [id, owner] of moneyLockContext.getStore() ?? []) {
+      const lock = await tx.execute({ sql: 'SELECT 1 FROM money_locks WHERE id = ? AND owner = ? AND expires_at > ?', args: [id, owner, Date.now()] })
+      if (!lock.rows.length) throw new Error('This operation lost its lock. Retry the same request.')
+    }
+    const result = await fn(tx)
+    await tx.commit()
+    return result
+  } catch (err) {
+    await tx.rollback()
+    throw err
+  } finally {
+    tx.close()
+  }
 }

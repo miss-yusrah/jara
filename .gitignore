@@ -5,3 +5,6 @@ node_modules
 data/*.db*
 *.tsbuildinfo
 next-env.d.ts
+
+# Local walkthrough renders, screenshots, and temporary capture data.
+/output/

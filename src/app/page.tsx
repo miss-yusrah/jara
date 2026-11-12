@@ -6,166 +6,203 @@ import { botLink } from '@/lib/telegram'
 export const dynamic = 'force-dynamic'
 
 const WEEK = [
-  { day: 'Mon', icon: 'sun', title: 'Claimed G$ for you', body: 'Light jar 40% · Data 80% · Airtime 65%', tone: 'cream' },
-  { day: 'Tue', icon: 'chat', title: '"Buy 1GB for my mama"', body: 'Sent in 10 seconds. Paid from the Data jar.', tone: 'mandarin' },
-  { day: 'Wed', icon: 'sparkle', title: 'Brainstormed your project', body: '8 final-year project ideas in 20 seconds. G$ 150 from your AI jar.', tone: 'cream' },
-  { day: 'Thu', icon: 'bolt', title: 'Light jar hit ₦3,000', body: 'Auto-paid. Meter token sent to your chat.', tone: 'crest' },
-  { day: 'Fri', icon: 'star', title: 'Reward collected', body: 'First bill paid with G$ — +G$ 300 bonus, no forms.', tone: 'cream' },
-  { day: 'Sat', icon: 'flame', title: '7-day streak bonus', body: 'Extra G$ dropped in for showing up all week.', tone: 'forest' },
-  { day: 'Sun', icon: 'chart', title: 'Your weekly wrap', body: '4 bills paid with G$. ₦600 you didn’t spend.', tone: 'mandarin' },
+  { day: 'Mon', icon: 'sun', title: 'Claimed G$ for you', body: 'Shared across your jars before you woke up. AI jar 60%.' },
+  { day: 'Tue', icon: 'star', title: 'Your JAMB Biology practice', body: '20 questions, selectable answers and a results review. G$ 50 from your AI jar.' },
+  { day: 'Wed', icon: 'sparkle', title: 'Brainstormed your project', body: '8 final-year project ideas in 20 seconds. G$ 150 from your AI jar.' },
+  { day: 'Thu', icon: 'chat', title: '3 opportunities found', body: 'A CS internship and two scholarships that fit you, with real links.' },
+  { day: 'Fri', icon: 'coins', title: 'Weekly saver bonus', body: 'Claimed 5 days this week: +G$ 400, no forms.' },
+  { day: 'Sat', icon: 'flame', title: '7-day streak bonus', body: 'Extra G$ dropped in for showing up all week.' },
+  { day: 'Sun', icon: 'chart', title: 'Your weekly wrap', body: '6 drills done, 3 opportunities sent, every claim on time.' },
 ] as const
 
-const TONE: Record<string, string> = {
-  cream: 'bg-cream text-ink',
-  mandarin: 'bg-mandarin text-ink',
-  crest: 'bg-crest text-ink',
-  forest: 'bg-forest text-cream',
-}
+const JOBS = [
+  { n: '01', t: 'Saves', d: 'Claims your G$ every day and splits it into budgets for light, data and airtime.', c: 'jar-budget-light' },
+  { n: '02', t: 'Pays', d: 'Knows when each bill comes round, makes sure the budget is ready and pays, then sends proof.', c: 'jar-budget-data' },
+  { n: '03', t: 'Finds rewards', d: 'Streaks, first bills, invites, weekly saving: Jara spots G$ bonuses and collects them.', c: 'jar-budget-airtime' },
+  { n: '04', t: 'Powers your AI', d: 'Your G$ pays for AI help: research, assignments, brainstorming, exam practice, CVs and more.', c: 'jar-budget-ai' },
+]
+
+const TOOLS = [
+  { t: 'Research brief', d: 'Any topic, explained simply', p: 300 },
+  { t: 'Assignment helper', d: 'Understand it, get an outline', p: 250 },
+  { t: 'Brainstorm', d: 'Ideas for projects & topics', p: 150 },
+  { t: 'Exam practice', d: 'WAEC, JAMB, NECO, uni', p: 200 },
+  { t: 'CV & cover letter', d: 'Stand out for jobs', p: 400 },
+  { t: 'Opportunity search', d: 'Scholarships, internships', p: 300 },
+  { t: 'Side-hustle plan', d: 'Start earning, step by step', p: 300 },
+  { t: 'Content writer', d: 'Captions, posts, bios', p: 100 },
+]
+
+const AUTOMATIONS = [
+  {
+    icon: 'star',
+    t: 'Daily exam prep',
+    d: 'Tell it your exam (WAEC, JAMB, NECO, Post-UTME) and the date. Every morning it prepares a full-screen, 20-question practice session. Choose your answers one at a time, then review your score and explanations.',
+    p: 'G$ 50 a day',
+  },
+  {
+    icon: 'sparkle',
+    t: 'Opportunity scout',
+    d: 'Tell it what you’re after. Every 3 days it reads real scholarship, internship and fellowship listings and sends the ones that fit you, with deadlines and the official link.',
+    p: 'G$ 50, only when it finds some',
+  },
+  {
+    icon: 'alert',
+    t: 'Never miss a claim',
+    d: 'It checks your GoodDollar face verification and warns you a week before it expires, so your daily G$ never quietly stops.',
+    p: 'Free, always on',
+  },
+]
+
+const eyebrow = 'text-[11px] font-bold tracking-[0.14em] text-forest/70 uppercase'
+const h2 = 'mt-3 max-w-3xl text-[clamp(2rem,5vw,3.25rem)] leading-[1.02] font-semibold tracking-[-0.04em]'
+const primary = 'app-button justify-center bg-forest text-cream hover:bg-forest-soft'
+const secondary = 'app-button-secondary justify-center'
 
 export default function Home() {
   const tg = botLink()
   return (
-    <main className="overflow-x-hidden">
+    <main className="jara-app overflow-x-hidden text-ink">
       {/* NAV */}
-      <header className="bg-forest">
+      <header className="app-topbar">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
-          <Link href="/" className="flex items-center gap-2 text-cream">
-            <span className="grid h-10 w-10 place-items-center rounded-xl border-[3px] border-ink bg-crest text-ink shadow-chunk-sm"><Icon name="jar" className="h-6 w-6" /></span>
-            <span className="text-2xl font-extrabold tracking-tight">Jara</span>
+          <Link href="/" className="flex items-center gap-2.5">
+            <span className="grid h-10 w-10 place-items-center rounded-[14px] bg-forest text-crest">
+              <Icon name="jar" className="h-5 w-5" />
+            </span>
+            <span className="text-xl font-bold tracking-tight">jara.</span>
           </Link>
-          <Link href="/app" className="press rounded-full border-[3px] border-ink bg-mandarin px-5 py-2 font-bold text-ink shadow-chunk-sm">
+          <Link href="/app" className={primary}>
             Open Jara
           </Link>
         </div>
       </header>
 
       {/* HERO */}
-      <section className="relative overflow-hidden border-b-[4px] border-ink bg-forest text-cream">
-        <div className="mx-auto max-w-7xl px-4 pt-8 pb-16 sm:px-6 lg:pt-12 lg:pb-20">
-          <p className="inline-flex items-center gap-2 rounded-full border-[3px] border-ink bg-crest px-4 py-1.5 text-sm font-extrabold text-ink uppercase shadow-chunk-sm">
-            <span className="h-2.5 w-2.5 rounded-full bg-mandarin" /> Powered by GoodDollar · Built on Celo
-          </p>
-
-          <div className="mt-6">
-            <div>
-            <h1 className="relative z-10 text-[clamp(4rem,17vw,12.5rem)] lg:text-[clamp(6rem,10vw,10.5rem)] leading-[0.82] font-extrabold tracking-[-0.055em] uppercase">
-              <span className="mb-[0.18em] flex items-center gap-[0.25em] whitespace-nowrap text-[0.36em] leading-none tracking-[-0.03em] text-crest">
-                Meet your AI agent
-                <span className="inline-block h-[0.14em] w-[1.6em] rounded-full bg-mandarin" />
-              </span>
-              <span className="block">
-                Your <span className="text-crest">G$,</span>
-              </span>
-              <span className="block lg:whitespace-nowrap">
-                put to{' '}
-                <span className="relative mt-3 inline-block -rotate-3 rounded-[0.18em] border-[5px] border-ink bg-mandarin px-[0.12em] pt-[0.04em] pb-[0.1em] text-ink shadow-[10px_10px_0_0_#0b1f16]">
-                  work.
-                </span>
-              </span>
+      <section className="mx-auto max-w-6xl px-4 pt-10 pb-16 sm:px-6 lg:pt-16">
+        <p className="inline-flex items-center gap-2 rounded-full bg-[#edf2e8] px-3 py-1.5 text-xs font-bold text-forest">
+          <span className="h-1.5 w-1.5 rounded-full bg-forest" /> Powered by GoodDollar · Built on Celo
+        </p>
+        <div className="mt-6 grid items-end gap-10 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+          <div>
+            <p className={eyebrow}>Meet your AI agent</p>
+            <h1 className="mt-3 text-[clamp(3rem,9vw,6rem)] leading-[0.95] font-semibold tracking-[-0.055em]">
+              Your G$, <span className="text-forest">put to work.</span>
             </h1>
-            <ul className="relative z-10 mt-10 grid w-fit grid-cols-2 gap-2.5 md:flex md:flex-wrap md:gap-3">
-              {[
-                { t: 'Saves it', c: 'bg-crest text-ink' },
-                { t: 'Pays your bills', c: 'bg-mandarin text-ink' },
-                { t: 'Finds you rewards', c: 'bg-cream text-ink' },
-                { t: 'Powers your AI', c: 'bg-forest-soft text-cream' },
-              ].map((j, i) => (
-                <li key={j.t} className={`flex items-center gap-2 rounded-full border-[3px] border-ink px-4 py-2 text-base font-extrabold uppercase shadow-chunk-sm sm:text-lg ${j.c}`}>
-                  <span className="text-sm opacity-60">0{i + 1}</span> {j.t}
-                </li>
-              ))}
-            </ul>
+            <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink/65">
+              Jara is an AI agent that quietly handles everyday money for you. It collects your GoodDollar every day and makes it useful: your light, data and airtime,
+              bonuses you&apos;d miss, and AI help for school and hustle.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link href="/app" className={`${primary} min-h-12 px-6 text-sm`}>
+                Get started <Icon name="arrow" className="h-4 w-4" />
+              </Link>
+              <a href="#start" className={`${secondary} min-h-12 px-6 text-sm`}>
+                How it works
+              </a>
             </div>
-
+            <p className="mt-4 text-xs font-semibold text-ink/45">In your browser or on Telegram · Clear budgets · G$ payments</p>
           </div>
 
-          <div className="mt-14 grid items-end gap-8 border-t-[3px] border-cream/15 pt-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-12">
-            <div>
-              <p className="max-w-2xl text-xl leading-snug font-semibold text-cream/90 sm:text-2xl">
-                Jara is an <span className="rounded-md bg-crest px-1.5 text-ink">AI agent</span> that quietly handles everyday money for you. It collects your GoodDollar every day and makes it useful — your{' '}
-                <span className="text-crest">light, data and airtime</span>, bonuses you&apos;d miss, and{' '}
-                <span className="text-crest">AI help for school and hustle</span>.
+          {/* A glimpse of the app */}
+          <div className="balance-card">
+            <div className="relative z-10">
+              <p className="text-xs font-semibold text-cream/65">Available to spend</p>
+              <p className="mt-3 text-[48px] leading-none font-semibold tracking-[-0.05em] tabular-nums">
+                <span className="mr-2 text-[26px] font-medium tracking-normal text-crest">G$</span>19,400
               </p>
-            </div>
-            <div>
-              <div className="flex flex-col gap-4 sm:flex-row">
-                <a
-                  href={tg ?? '/app'}
-                  className="press inline-flex items-center justify-center gap-2 rounded-2xl border-[4px] border-ink bg-mandarin px-8 py-5 text-xl font-extrabold text-ink uppercase shadow-chunk-lg"
-                >
-                  Start on Telegram →
-                </a>
-                <Link
-                  href="/app"
-                  className="press inline-flex items-center justify-center rounded-2xl border-[4px] border-ink bg-cream px-8 py-5 text-xl font-extrabold text-ink uppercase shadow-chunk-lg"
-                >
-                  Use it in your browser
-                </Link>
+              <p className="mt-3 text-sm text-cream/55">≈ ₦2,910 · claimed for you this morning</p>
+              <div className="mt-6 grid grid-cols-4 items-end gap-2 rounded-2xl bg-cream/[0.06] px-3 pt-4 pb-2">
+                <Jar pct={72} color="crest" lid="#ff6b00" className="h-20" label={{ icon: 'bolt', text: 'Light' }} />
+                <Jar pct={45} color="mandarin" className="h-24" label={{ icon: 'signal', text: 'Data' }} />
+                <Jar pct={90} color="crest" lid="#ff6b00" className="h-[72px]" label={{ icon: 'phone', text: 'Airtime' }} />
+                <Jar pct={60} color="mandarin" lid="#1d5a3f" className="h-[88px]" label={{ icon: 'spark', text: 'AI' }} />
               </div>
-              <p className="mt-5 text-sm font-bold tracking-wide text-cream/60 uppercase">Works on any phone · No crypto talk · No gas</p>
             </div>
+          </div>
+        </div>
+
+        <ul className="mt-12 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {['Saves it', 'Pays your bills', 'Finds you rewards', 'Powers your AI'].map((t, i) => (
+            <li key={t} className="app-card flex items-center gap-3 px-4 py-3.5 text-sm font-semibold">
+              <span className="text-xs font-bold text-forest/50 tabular-nums">0{i + 1}</span> {t}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {/* START */}
+      <section id="start" className="scroll-mt-4 border-y border-ink/8 bg-white py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <p className={eyebrow}>Get started · about 3 minutes</p>
+          <h2 className={h2}>Three steps, then Jara takes over.</h2>
+          <div className="mt-10 grid gap-4 lg:grid-cols-3">
+            <Step n={1} title="Connect your wallet">
+              Tap Connect and sign in with Google or email, or use MetaMask or any phone wallet. No seed phrase needed with Google.
+            </Step>
+            <Step n={2} title="Verify once on GoodDollar">
+              GoodDollar gives verified people free G$ every day. If your wallet isn’t verified yet, Jara walks you through the one-time face check right there.
+            </Step>
+            <Step n={3} title="Approve, then relax">
+              Approve two things in your wallet: the link that lets Jara claim your daily G$, and a spending limit for bills and AI. Cancel the limit any time.
+            </Step>
+          </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <p className="rounded-2xl bg-[#f7f8f2] p-5 text-sm leading-relaxed text-ink/65">
+              <span className="font-bold text-ink">Prefer chat apps?</span> Everything works in your browser. Add Telegram any time from Getting started and Jara sends your
+              morning updates, drills and receipts there too.
+            </p>
+            <p className="rounded-2xl bg-[#f7f8f2] p-5 text-sm leading-relaxed text-ink/65">
+              <span className="font-bold text-ink">New phone or cleared your browser?</span> Connect the same wallet and sign one message. Jara opens your existing account,
+              jars and history.
+            </p>
           </div>
         </div>
       </section>
 
       {/* HOW */}
-      <section className="grain bg-cream py-20">
+      <section className="py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_440px]">
+          <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1fr)_420px]">
             <div>
-              <h2 className="max-w-2xl text-4xl leading-none font-extrabold tracking-tight sm:text-6xl">
-                One AI agent. <span className="text-mandarin">Four jobs.</span> G$ drives all of them.
+              <p className={eyebrow}>What it does</p>
+              <h2 className={h2}>
+                One AI agent. <span className="text-forest">Four jobs.</span> G$ drives all of them.
               </h2>
-              <p className="mt-6 max-w-lg text-lg font-medium text-ink/70">
+              <p className="mt-5 max-w-lg text-lg leading-relaxed text-ink/65">
                 Jara works while you sleep. Every morning you get one short message saying what it did with your G$, and you don&apos;t have to lift a finger.
               </p>
             </div>
-                <div className="relative mx-auto w-full max-w-[440px]">
-                  <div className="grid grid-cols-4 items-end gap-3 px-2">
-                    <div className="animate-bob" style={{ animationDelay: '0s' }}>
-                      <Jar pct={72} color="crest" lid="#ff6b00" className="h-40 sm:h-44" label={{ icon: 'bolt', text: 'Light' }} />
-                    </div>
-                    <div className="animate-bob" style={{ animationDelay: '0.4s' }}>
-                      <Jar pct={45} color="mandarin" className="h-48 sm:h-52" label={{ icon: 'signal', text: 'Data' }} />
-                    </div>
-                    <div className="animate-bob" style={{ animationDelay: '0.8s' }}>
-                      <Jar pct={90} color="crest" lid="#ff6b00" className="h-36 sm:h-40" label={{ icon: 'phone', text: 'Airtime' }} />
-                    </div>
-                    <div className="animate-bob" style={{ animationDelay: '1.2s' }}>
-                      <Jar pct={60} color="mandarin" lid="#1d5a3f" className="h-44 sm:h-48" label={{ icon: 'spark', text: 'AI' }} />
-                    </div>
-                  </div>
-                  <div className="h-5 rounded-lg border-[4px] border-ink bg-crest shadow-chunk" />
-                  <div className="relative -mt-3 mr-[-8px] ml-auto w-[88%] rotate-2 rounded-3xl rounded-br-md border-[4px] border-ink bg-white p-5 text-ink shadow-chunk-lg">
-                    <p className="flex items-center gap-1.5 text-sm font-extrabold text-forest uppercase"><Icon name="bot" className="h-4 w-4" /> Jara AI agent · 7:02am</p>
-                    <p className="mt-1 text-lg leading-snug font-bold">Morning! While you slept I:</p>
-                    <ul className="mt-2 grid gap-1 text-[15px] font-bold">
-                      {([
-                        ['sun', 'bg-crest', 'Claimed G$ 1,400 into your jars'],
-                        ['bolt', 'bg-mandarin', 'Paid ₦3,000 light — token sent'],
-                        ['star', 'bg-cream', 'Collected a G$ 400 saver bonus'],
-                        ['sparkle', 'bg-forest text-cream', 'AI jar covers 2 research briefs'],
-                      ] as const).map(([ic, bg, t]) => (
-                        <li key={t} className="flex items-center gap-2">
-                          <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 border-ink ${bg}`}><Icon name={ic} className="h-3.5 w-3.5" strokeWidth={2.5} /></span>
-                          {t}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
+            <div className="app-card p-5">
+              <p className="flex items-center gap-1.5 text-xs font-bold text-forest">
+                <Icon name="bot" className="h-4 w-4" /> Jara · 7:02am
+              </p>
+              <p className="mt-2 text-base font-semibold">Morning! While you slept I:</p>
+              <ul className="mt-3 grid gap-2 text-sm">
+                {(
+                  [
+                    ['sun', 'Claimed G$ 1,400 into your jars'],
+                    ['star', 'Sent your JAMB Biology drill'],
+                    ['coins', 'Collected a G$ 400 saver bonus'],
+                    ['sparkle', 'AI jar covers 2 research briefs'],
+                  ] as const
+                ).map(([ic, t]) => (
+                  <li key={t} className="flex items-center gap-2.5">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#edf2e8] text-forest">
+                      <Icon name={ic} className="h-3.5 w-3.5" strokeWidth={2.5} />
+                    </span>
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
-          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              { n: '01', t: 'Saves', d: 'Claims your G$ every day and splits it into jars for Light, Data and Airtime.', c: 'bg-crest' },
-              { n: '02', t: 'Pays', d: 'Knows when each bill comes round, tops the jar up in time and pays — then sends proof.', c: 'bg-mandarin' },
-              { n: '03', t: 'Finds rewards', d: 'Streaks, first bills, invites, weekly saving — Jara spots G$ bonuses and collects them.', c: 'bg-cream' },
-              { n: '04', t: 'Powers your AI', d: 'Your G$ pays for AI help: research, assignments, brainstorming, exam practice, CVs and more.', c: 'bg-forest text-cream' },
-            ].map((s) => (
-              <div key={s.n} className={`press rounded-3xl border-[3px] border-ink p-7 shadow-chunk-lg ${s.c}`}>
-                <p className="text-5xl font-extrabold opacity-90">{s.n}</p>
-                <p className="mt-6 text-2xl font-extrabold">{s.t}</p>
-                <p className="mt-3 text-lg leading-relaxed font-medium opacity-90">{s.d}</p>
+          <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {JOBS.map((s) => (
+              <div key={s.n} className={`jar-budget ${s.c} p-5`}>
+                <p className="text-xs font-bold text-ink/40 tabular-nums">{s.n}</p>
+                <p className="mt-4 text-lg font-semibold tracking-tight">{s.t}</p>
+                <p className="mt-2 text-sm leading-relaxed text-ink/60">{s.d}</p>
               </div>
             ))}
           </div>
@@ -173,24 +210,26 @@ export default function Home() {
       </section>
 
       {/* WEEK */}
-      <section className="bg-mandarin py-20">
+      <section className="border-y border-ink/8 bg-white py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-            <h2 className="text-4xl leading-none font-extrabold tracking-tight text-ink sm:text-6xl">A week with Jara.</h2>
-            <p className="max-w-sm text-lg font-semibold text-ink/80">Claims, payments and bonuses are real G$ transactions on Celo — small, daily, useful.</p>
+            <div>
+              <p className={eyebrow}>A week with Jara</p>
+              <h2 className={h2}>Small, daily, useful.</h2>
+            </div>
+            <p className="max-w-sm text-sm leading-relaxed text-ink/60">Claims, AI payments and bonuses are real G$ transactions on Celo.</p>
           </div>
-          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {WEEK.map((w, i) => (
-              <div
-                key={w.day}
-                className={`press rounded-3xl border-[3px] border-ink p-5 shadow-chunk ${TONE[w.tone === 'mandarin' ? 'crest' : w.tone]} ${i === 0 ? 'lg:col-span-2' : ''}`}
-              >
+              <div key={w.day} className={`app-card p-5 ${i === 0 ? 'lg:col-span-2' : ''}`}>
                 <div className="flex items-center justify-between">
-                  <span className="rounded-full border-[3px] border-ink bg-cream px-3 py-0.5 text-sm font-extrabold text-ink">{w.day}</span>
-                  <span className="grid h-11 w-11 place-items-center rounded-xl border-[3px] border-ink bg-cream text-ink"><Icon name={w.icon as IconName} className="h-6 w-6" /></span>
+                  <span className="rounded-full bg-[#f4f5ef] px-2.5 py-1 text-[10px] font-bold tracking-wider text-ink/50 uppercase">{w.day}</span>
+                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#edf2e8] text-forest">
+                    <Icon name={w.icon as IconName} className="h-4 w-4" />
+                  </span>
                 </div>
-                <p className="mt-5 text-xl leading-tight font-extrabold">{w.title}</p>
-                <p className="mt-2 font-medium opacity-80">{w.body}</p>
+                <p className="mt-5 text-base font-semibold tracking-tight">{w.title}</p>
+                <p className="mt-1.5 text-sm leading-relaxed text-ink/55">{w.body}</p>
               </div>
             ))}
           </div>
@@ -198,35 +237,55 @@ export default function Home() {
       </section>
 
       {/* AI */}
-      <section className="grain bg-cream py-20">
-        <div className="mx-auto grid max-w-6xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-[1fr_1.1fr]">
+      <section className="py-20">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 sm:px-6 lg:grid-cols-[1fr_1.1fr]">
           <div>
-            <p className="text-sm font-extrabold tracking-widest text-mandarin uppercase">For students &amp; young people</p>
-            <h2 className="mt-3 text-4xl leading-none font-extrabold tracking-tight sm:text-6xl">
-              Your G$ pays for <span className="rounded-xl bg-forest px-2 text-crest">your AI.</span>
+            <p className={eyebrow}>For students &amp; young people</p>
+            <h2 className={h2}>
+              Your G$ pays for <span className="text-forest">your AI.</span>
             </h2>
-            <p className="mt-6 max-w-lg text-lg font-medium text-ink/75">
+            <p className="mt-5 max-w-lg text-lg leading-relaxed text-ink/65">
               No card, no subscription. The G$ you collect every day fills your AI jar, and each time you ask for help, Jara pays for the AI with it.
             </p>
-            <p className="mt-3 max-w-lg text-sm font-semibold text-ink/55">For assignments, Jara helps you understand and plan — you still write it in your own words.</p>
+            <p className="mt-3 max-w-lg text-sm text-ink/45">For assignments, Jara helps you understand and plan. You still write it in your own words.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {[
-              { t: 'Research brief', d: 'Any topic, explained simply', p: 300 },
-              { t: 'Assignment helper', d: 'Understand it, get an outline', p: 250 },
-              { t: 'Brainstorm', d: 'Ideas for projects & topics', p: 150 },
-              { t: 'Exam practice', d: 'WAEC, JAMB, NECO, uni', p: 200 },
-              { t: 'CV & cover letter', d: 'Stand out for jobs', p: 400 },
-              { t: 'Opportunity scout', d: 'Scholarships, internships', p: 300 },
-              { t: 'Side-hustle plan', d: 'Start earning, step by step', p: 300 },
-              { t: 'Content writer', d: 'Captions, posts, bios', p: 100 },
-            ].map((x, i) => (
-              <div key={x.t} className={`press rounded-2xl border-[3px] border-ink p-4 shadow-chunk-sm ${i % 3 === 0 ? 'bg-crest' : i % 3 === 1 ? 'bg-white' : 'bg-mandarin'}`}>
+            {TOOLS.map((x) => (
+              <div key={x.t} className="app-card p-4">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="leading-tight font-extrabold">{x.t}</p>
-                  <span className="shrink-0 rounded-lg bg-ink px-2 py-0.5 text-xs font-extrabold text-cream">G$ {x.p}</span>
+                  <p className="text-sm leading-tight font-semibold">{x.t}</p>
+                  <span className="shrink-0 rounded-full bg-[#edf2e8] px-2 py-0.5 text-[10px] font-bold text-forest tabular-nums">G$ {x.p}</span>
                 </div>
-                <p className="mt-1.5 text-sm font-semibold opacity-75">{x.d}</p>
+                <p className="mt-1.5 text-xs text-ink/55">{x.d}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ON ITS OWN */}
+      <section className="border-y border-ink/8 bg-white py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+            <div>
+              <p className={eyebrow}>Automations</p>
+              <h2 className={h2}>
+                It doesn&apos;t wait <span className="text-forest">to be asked.</span>
+              </h2>
+            </div>
+            <p className="max-w-sm text-sm leading-relaxed text-ink/60">
+              A chatbot answers when you type. Jara is an agent: switch a job on once and it keeps doing it, in the app or on Telegram.
+            </p>
+          </div>
+          <div className="mt-10 grid gap-3 lg:grid-cols-3">
+            {AUTOMATIONS.map((x) => (
+              <div key={x.t} className="app-card p-6">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf2e8] text-forest">
+                  <Icon name={x.icon as IconName} className="h-5 w-5" />
+                </span>
+                <p className="mt-5 text-lg font-semibold tracking-tight">{x.t}</p>
+                <p className="mt-2 text-sm leading-relaxed text-ink/60">{x.d}</p>
+                <p className="mt-4 inline-block rounded-full bg-[#f4f5ef] px-3 py-1 text-xs font-bold text-ink/60">{x.p}</p>
               </div>
             ))}
           </div>
@@ -234,63 +293,76 @@ export default function Home() {
       </section>
 
       {/* CHAT */}
-      <section className="bg-forest py-20 text-cream">
-        <div className="mx-auto grid max-w-6xl items-center gap-12 px-4 sm:px-6 lg:grid-cols-2">
+      <section className="py-20">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 sm:px-6 lg:grid-cols-2">
           <div>
-            <h2 className="text-4xl leading-none font-extrabold tracking-tight sm:text-6xl">
-              Talk to it like <span className="text-crest">your person.</span>
+            <p className={eyebrow}>English or Pidgin</p>
+            <h2 className={h2}>
+              Talk to it like <span className="text-forest">your person.</span>
             </h2>
-            <p className="mt-6 max-w-lg text-lg text-cream/80">
-              Jara is an AI agent that understands English and Pidgin. It works out what you mean, shows you exactly what it&apos;s about to pay, and waits for your “yes”.
+            <p className="mt-5 max-w-lg text-lg leading-relaxed text-ink/65">
+              Tell Jara what you need, in the app or on Telegram, and it tells you what it costs before it spends a single G$.
             </p>
           </div>
-          <div className="space-y-3 rounded-[2rem] border-[3px] border-ink bg-cream p-5 text-ink shadow-chunk-lg">
-            <Bubble me>Abeg send ₦500 airtime to my mama 0803 555 1234</Bubble>
-            <Bubble>₦500 MTN airtime to 0803 555 1234 — G$ from your Airtime jar. Make I send am?</Bubble>
-            <div className="flex gap-2 pl-1">
-              <span className="rounded-xl border-[3px] border-ink bg-mandarin px-4 py-2 font-extrabold shadow-chunk-sm">Pay it</span>
-              <span className="rounded-xl border-[3px] border-ink bg-cream px-4 py-2 font-extrabold shadow-chunk-sm">Cancel</span>
-            </div>
-            <Bubble>Done. Mama don get am. Airtime jar still dey 60%.</Bubble>
+          <div className="app-card space-y-3 p-5">
+            <Bubble me>My JAMB na 5 May. Biology and Chemistry. Abeg help me prepare</Bubble>
+            <Bubble>I fit send you a full 20-question practice every morning till 5 May, Biology and Chemistry in turn. Pick your answers for the full-screen prep, then see your score. Na G$ 50 each from your AI jar. Make I start?</Bubble>
+            <Bubble me>Yes o</Bubble>
+            <Bubble>Done ✅ Your Biology practice dey ready. Open the link, choose your answers, and see your score at the end. 📚</Bubble>
           </div>
         </div>
       </section>
 
       {/* CTA */}
-      <section className="bg-crest py-20">
-        <div className="mx-auto max-w-4xl px-4 text-center sm:px-6">
-          <h2 className="text-5xl leading-[0.95] font-extrabold tracking-tight text-ink sm:text-7xl">Let your G$ do the boring part.</h2>
-          <div className="mt-10 flex flex-col justify-center gap-4 sm:flex-row">
-            <a href={tg ?? '/app'} className="press rounded-2xl border-[3px] border-ink bg-mandarin px-8 py-4 text-lg font-extrabold shadow-chunk">
-              Start on Telegram →
-            </a>
-            <Link href="/app" className="press rounded-2xl border-[3px] border-ink bg-forest px-8 py-4 text-lg font-extrabold text-cream shadow-chunk">
-              Open web app
-            </Link>
+      <section className="px-4 pb-20 sm:px-6">
+        <div className="balance-card mx-auto max-w-6xl px-6 py-14 text-center sm:py-16">
+          <div className="relative z-10">
+            <h2 className="mx-auto max-w-2xl text-[clamp(2rem,5vw,3.5rem)] leading-[1.02] font-semibold tracking-[-0.045em]">Let your G$ do the boring part.</h2>
+            <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+              <Link href="/app" className="app-button min-h-12 justify-center bg-crest px-6 text-sm text-ink hover:bg-crest-soft">
+                Get started in your browser <Icon name="arrow" className="h-4 w-4" />
+              </Link>
+              {tg && (
+                <a href={tg} className="app-button min-h-12 justify-center border border-cream/20 bg-cream/10 px-6 text-sm text-cream hover:bg-cream/15">
+                  Start on Telegram
+                </a>
+              )}
+            </div>
           </div>
         </div>
       </section>
 
-      <footer className="bg-forest-deep py-10 text-cream/70">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 text-sm font-semibold sm:flex-row sm:px-6">
-          <p className="flex items-center gap-2"><Icon name="jar" className="h-4 w-4" /> Jara · GoodBuilders Season 5</p>
-          <p>Built on GoodDollar &amp; Celo · Brain on AntSeed · by Calbridge Digital Labs · <a href="https://github.com/miss-yusrah/jara" target="_blank" rel="noreferrer" className="underline hover:text-cream">GitHub</a></p>
+      <footer className="border-t border-ink/8 py-8 text-ink/50">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 text-xs font-semibold sm:flex-row sm:px-6">
+          <p className="flex items-center gap-2">
+            <Icon name="jar" className="h-4 w-4" /> Jara · GoodBuilders Season 5
+          </p>
+          <p className="text-center">
+            Built on GoodDollar &amp; Celo · Brain on AntSeed · by Calbridge Digital Labs ·{' '}
+            <a href="https://github.com/miss-yusrah/jara" target="_blank" rel="noreferrer" className="underline hover:text-ink">
+              GitHub
+            </a>
+          </p>
         </div>
       </footer>
     </main>
   )
 }
 
+function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <div className="app-card p-6">
+      <span className="grid h-9 w-9 place-items-center rounded-full bg-forest text-sm font-bold text-cream">{n}</span>
+      <p className="mt-5 text-lg font-semibold tracking-tight">{title}</p>
+      <p className="mt-2 text-sm leading-relaxed text-ink/60">{children}</p>
+    </div>
+  )
+}
+
 function Bubble({ children, me }: { children: React.ReactNode; me?: boolean }) {
   return (
     <div className={`flex ${me ? 'justify-end' : ''}`}>
-      <p
-        className={`max-w-[85%] rounded-2xl border-[3px] border-ink px-4 py-3 text-base leading-snug font-semibold ${
-          me ? 'rounded-br-md bg-forest text-cream' : 'rounded-bl-md bg-crest-soft'
-        }`}
-      >
-        {children}
-      </p>
+      <p className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-snug ${me ? 'rounded-br-md bg-forest text-cream' : 'rounded-bl-md bg-[#f4f5ef] text-ink'}`}>{children}</p>
     </div>
   )
 }

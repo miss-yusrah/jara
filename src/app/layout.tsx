@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from 'next'
-import { Bricolage_Grotesque } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 
-const bricolage = Bricolage_Grotesque({ variable: '--font-bricolage', subsets: ['latin'], weight: ['400', '500', '600', '700', '800'] })
+const bricolage = localFont({ src: './fonts/BricolageGrotesque.ttf', variable: '--font-bricolage', weight: '200 800', display: 'swap' })
 
 export const metadata: Metadata = {
   title: 'Jara — your AI agent that puts your G$ to work',

@@ -1,3 +1,4 @@
+import { requestKey } from '@/lib/money-request'
 import { NextResponse } from 'next/server'
 import { isAiTool, runAiTool } from '@/lib/ai-tools'
 import { clientIp, rateLimit } from '@/lib/ratelimit'
@@ -16,9 +17,11 @@ export async function POST(req: Request) {
   if (!rateLimit(`ai:${user.id}`, 10, 10 * 60_000) || !rateLimit(`ai-ip:${clientIp(req)}`, 30, 10 * 60_000)) {
     return NextResponse.json({ error: 'You’ve asked a lot just now — try again in a few minutes.' }, { status: 429 })
   }
-  const body = (await req.json().catch(() => ({}))) as { tool?: string; input?: string }
+  const body = (await req.json().catch(() => ({}))) as { requestId?: string; tool?: string; input?: string }
+  let requestId: string
+  try { requestId = requestKey(body.requestId) } catch { return NextResponse.json({ error: 'A request ID is required. Refresh and try again.' }, { status: 400 }) }
   if (!isAiTool(body.tool)) return bad('Pick a helper')
-  const r = await runAiTool(user, body.tool, String(body.input ?? ''))
+  const r = await runAiTool(user, body.tool, String(body.input ?? ''), requestId)
   if (!r.ok) return bad(r.message ?? 'Something went wrong')
   return NextResponse.json({ output: r.output, costGd: r.costGd, demo: r.demo, state: await userState((await getUserById(user.id))!) })
 }

@@ -10,11 +10,14 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "test": "node --require ./tests/register.cjs --test tests/*.test.cjs"
   },
   "dependencies": {
     "@goodsdks/citizen-sdk": "^1.2.7",
     "@libsql/client": "^0.18.0",
+    "@walletconnect/ethereum-provider": "^2.26.0",
+    "@web3auth/modal": "^10.16.0",
     "marked": "^18.1.2",
     "next": "^16.3.5",
     "pdfkit": "^0.20.2",

@@ -17,10 +17,32 @@ The agent runs on its own schedule (`/api/cron/daily`, every few hours) and send
 
 1. **One-time link.** The user's face-verified GoodDollar wallet calls `IdentityV4.connectAccount(jarAddress)`. The jar address is a wallet Jara creates for that user, with its key encrypted at rest. Connected accounts share the identity's single daily claim, so the jar wallet can claim UBI itself.
 2. **Daily cron** (`/api/cron/daily`). For each user, Jara calls `UBIScheme.claim()` from the jar wallet, splits the new G$ across jars by how much each still needs, gives a streak bonus every 7 days, and auto-pays any jar that has reached its target. It then sends a morning message on Telegram.
-3. **Paying a bill.** G$ goes from the jar wallet to the treasury on Celo (a real G$ transaction). The bill is then bought through VTpass. If VTpass rejects it, the G$ is refunded.
+3. **Paying a bill.** One funding wallet pays the treasury on Celo: either the Jara-managed wallet or the verified personal wallet within its approved allowance. A purchase is never split between both. The configured provider then delivers the bill. A confirmed failure refunds the original funding wallet.
 4. **The agent brain.** An OpenAI-compatible tool-calling loop pointed at the **AntSeed** buyer proxy (`localhost:8377`), which pays per call in USDC on Base. If AntSeed isn't reachable, a built-in rule parser takes over, so the bot never goes silent.
 
 Gas: the GoodDollar faucet is tried first, and the treasury sends CELO if the faucet doesn't cover it.
+
+### Money and jar budgets
+
+Jars are allocations of available G$, not additional wallets or additional money. Purchases can use only their own jar. The dashboard's explicit budget-move form changes allocations atomically without transferring tokens. Automatic allocation may distribute unassigned funds, but cannot borrow from another jar. Personal-wallet budgets are not locked savings: external spending or allowance changes can reduce them.
+
+Automatic UBI claims still arrive in a wallet whose encrypted key Jara manages. Users can explicitly withdraw those funds. This is not a fully noncustodial design. Existing personal-wallet G$ stays there until a purchase uses its allowance. Each verified root wallet can fund only one Jara account; existing duplicate accounts require reconciliation rather than silently sharing a balance.
+
+New purchases charge the quoted G$ amount only. Jara covers sponsored payment fees; it does not append an unquoted gas charge. Existing `gas_owed_wei` balances remain reserved and visible for separate reconciliation, rather than being silently forgiven or collected with new purchases.
+
+### Payment recovery
+
+- `money_requests` binds a request ID to its owner, input, saved output, and final result. Clients retain IDs through retries. Bill confirmation buttons identify the exact reviewed bill. Automated bills use stable cycle IDs; daily claims and rewards use stable day/reward IDs.
+- `payments` reserves the selected jar budget before charging. `chain_transactions` stores signed transaction bytes and their hash **before broadcast**. Recovery rebroadcasts those same bytes, never a newly signed charge. Receipt status and the expected G$ transfer event must confirm before a charge or refund is recorded as completed.
+- Database leases serialize users and signing wallets across workers. Ledger mutations verify lease ownership inside their database transaction. Unresolved signer transactions block new transactions from that signer until reconciled.
+- Bills persist their provider reference before submission. Timeouts and `not_found` responses remain pending; they are not grounds for an automatic refund or a fresh provider purchase. Refunds remain pending until the transfer is confirmed. Refunds do not restore an ERC-20 allowance, so a refunded wallet balance may require renewed permission before it can fund jar budgets again.
+- AI output is saved before payment. Only a confirmed charge creates a paid AI usage/activity record. An interrupted AI stream is not charged. Cron and session refresh resume saved payments and withdrawals.
+
+Before deploying this migration, back up the database and stop the old workers so they cannot continue using the old payment flow. Deploy all workers together against the same database. Keep the existing daily cron enabled for recovery.
+
+Older in-flight activities without `operation_id` lack the transaction journal needed to safely infer whether a refund already happened. Provider success can be recorded, but failed/ambiguous legacy orders remain pending for receipt reconciliation. Do not delete pending payment rows, signed transaction records, or request IDs to force retries. Check the original transaction and provider reference first; a dropped transaction or a provider that never returns a definitive result can require operator intervention.
+
+Run `npm test`, `npm run typecheck`, `npm run lint`, and `npm run build` to verify changes. Tests use isolated temporary databases and simulated RPC/provider failures; they do not move real funds.
 
 ## Run it
 

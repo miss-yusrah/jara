@@ -1,15 +1,23 @@
 import { NextResponse } from 'next/server'
-import { currentUser, setSessionCookie } from '@/lib/session'
-import { createUser, getUserByLinkCode, getUserByRefCode, rotateLinkCode } from '@/lib/users'
+import { SESSION_COOKIE, currentUser, setSessionCookie } from '@/lib/session'
+import { settlePendingBills } from '@/lib/bills'
+import { createUser, getUserById, getUserByLinkCode, getUserByRefCode, rotateLinkCode } from '@/lib/users'
 import { clientIp, rateLimit } from '@/lib/ratelimit'
 import { userState } from '../_shared'
+import { recoverUserPayments } from '@/lib/money-recovery'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   const user = await currentUser()
   if (!user) return NextResponse.json({ user: null })
-  return NextResponse.json(await userState(user))
+  // Bills still "processing" (e.g. FalconPay answered slowly): re-check them now instead of
+  // waiting for the webhook or the scheduled run. At most every 20s per person.
+  if (rateLimit(`settle:${user.id}`, 1, 20_000)) {
+    await recoverUserPayments(user).catch((err) => console.warn('[session] payment recovery', err))
+    await settlePendingBills(undefined, user.id).catch((err) => console.warn('[session] settle failed', err))
+  }
+  return NextResponse.json(await userState((await getUserById(user.id)) ?? user))
 }
 
 export async function POST(req: Request) {
@@ -36,5 +44,12 @@ export async function POST(req: Request) {
   const user = await createUser({ name, referredBy: referrer?.id })
   const res = NextResponse.json(await userState(user))
   setSessionCookie(res, user.sessionToken)
+  return res
+}
+
+// Sign out on this device. The account stays; connecting the same wallet signs back in.
+export async function DELETE() {
+  const res = NextResponse.json({ ok: true })
+  res.cookies.set(SESSION_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
   return res
 }

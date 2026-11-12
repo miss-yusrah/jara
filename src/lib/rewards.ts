@@ -1,8 +1,9 @@
 import { parseEther } from 'viem'
 import { sendGdFromTreasury } from './chain'
-import { run } from './db'
-import { syncJars } from './jars'
-import { logActivity, type User } from './users'
+import { atomic, run } from './db'
+import { syncJars, withUserLock } from './jars'
+import { authorizedUser } from './wallet-authorization'
+import { type User } from './users'
 
 // G$ rewards the agent finds and collects for the user. Each reward is keyed so
 // it pays once (or once per period). Paid from the Jara treasury.
@@ -63,31 +64,33 @@ async function alreadyPaid(userId: string): Promise<Set<string>> {
 
 /** Find and collect every reward the user qualifies for. */
 export async function collectRewards(user: User): Promise<{ title: string; amountGd: number }[]> {
-  const paid = await alreadyPaid(user.id)
-  const due: { key: string; title: string; amountGd: number }[] = []
-  for (const rule of REWARD_RULES) {
-    const key = rule.key(user)
-    if (!paid.has(key) && (await rule.eligible(user))) due.push({ key, title: rule.title, amountGd: rule.amountGd })
-  }
-  for (const r of await referralRewards(user)) if (!paid.has(r.key)) due.push(r)
-
-  const collected: { title: string; amountGd: number }[] = []
-  for (const r of due) {
-    // Reserve the key first so a crash can never pay twice.
-    const ins = await run('INSERT OR IGNORE INTO rewards_paid (user_id, reward_key, amount_gd, created_at) VALUES (?, ?, ?, ?)', [user.id, r.key, r.amountGd, Date.now()])
-    if (ins.rowsAffected === 0) continue
-    try {
-      const amount = parseEther(String(r.amountGd))
-      const hash = await sendGdFromTreasury(user.agentAddress, amount)
-      await logActivity(user.id, { type: 'reward', amountWei: amount.toString(), txHash: hash, title: `Reward found: ${r.title}`, detail: `+G$ ${r.amountGd.toLocaleString()}` })
-      collected.push(r)
-    } catch (err) {
-      await run('DELETE FROM rewards_paid WHERE user_id = ? AND reward_key = ?', [user.id, r.key])
-      console.error('[rewards] payout failed', r.key, err)
+  return withUserLock(user.id, async () => {
+    user = await authorizedUser(user)
+    const paid = await alreadyPaid(user.id)
+    const due: { key: string; title: string; amountGd: number }[] = []
+    for (const rule of REWARD_RULES) {
+      const key = rule.key(user)
+      if (!paid.has(key) && (await rule.eligible(user))) due.push({ key, title: rule.title, amountGd: rule.amountGd })
     }
-  }
-  if (collected.length) await syncJars(user)
-  return collected
+    for (const r of await referralRewards(user)) if (!paid.has(r.key)) due.push(r)
+
+    const collected: { title: string; amountGd: number }[] = []
+    for (const r of due) {
+      try {
+        const amount = parseEther(String(r.amountGd))
+        const hash = await sendGdFromTreasury(user.agentAddress, amount, `reward:${user.id}:${r.key}`)
+        await atomic(async (tx) => {
+          await tx.execute({ sql: 'INSERT OR IGNORE INTO rewards_paid(user_id, reward_key, amount_gd, created_at) VALUES (?, ?, ?, ?)', args: [user.id, r.key, r.amountGd, Date.now()] })
+          await tx.execute({ sql: `INSERT OR IGNORE INTO activity(user_id, type, amount_wei, tx_hash, title, operation_id, created_at) VALUES (?, 'reward', ?, ?, ?, ?, ?)`, args: [user.id, String(amount), hash, `Reward found: ${r.title}`, `reward:${user.id}:${r.key}`, Date.now()] })
+        })
+        collected.push(r)
+      } catch (err) {
+        console.error('[rewards] payout failed', r.key, err)
+      }
+    }
+    if (collected.length) await syncJars(user)
+    return collected
+  })
 }
 
 /** What the user is close to earning, for the dashboard. */

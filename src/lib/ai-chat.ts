@@ -1,13 +1,14 @@
+import { jarSpendable } from './jars'
 import { randomBytes } from 'node:crypto'
 import { formatEther, parseEther } from 'viem'
 import { chatStream, llmReachable, type ChatMessage } from './agent/llm'
 import { AI_BASE_PROMPT, AI_TOOLS, followUpPrice, type AiToolId } from './ai-tools'
-import { gdBalance, sendGdFromAgent, treasuryAddress } from './chain'
-import { run } from './db'
+import { PaymentFailedError, spendGd } from './spend'
+import { moneyRequest } from './money-request'
+import { atomic, run } from './db'
 import { serverConfig } from './env'
-import { debitJars, syncJars, withUserLock } from './jars'
-import { logActivity, type User } from './users'
-import { decryptAgentKey } from './wallets'
+import { syncJars, withUserLock } from './jars'
+import type { User } from './users'
 
 // Jara AI: ChatGPT-style conversations. Every answer is paid in G$ from the
 // AI jar (first answer at the helper's price, follow-ups cheaper), charged only
@@ -46,6 +47,8 @@ export async function getChat(userId: string, chatId: string): Promise<{ chat: C
 export async function deleteChat(userId: string, chatId: string) {
   const own = await run('SELECT 1 FROM ai_chats WHERE id = ? AND user_id = ?', [chatId, userId])
   if (!own.rows.length) return
+  const pending = (await run('SELECT data FROM money_requests WHERE user_id = ? AND result IS NULL AND data IS NOT NULL', [userId])).rows
+  if (pending.some((r) => (JSON.parse(String(r.data)) as { chatId?: string }).chatId === chatId)) throw new Error('This chat has an unfinished request. Finish it before deleting the chat.')
   await run('DELETE FROM ai_messages WHERE chat_id = ?', [chatId])
   await run('DELETE FROM ai_chats WHERE id = ?', [chatId])
 }
@@ -68,7 +71,7 @@ export type StreamEvent =
   | { t: 'chat'; chatId: string; title: string; priceGd: number }
   | { t: 'delta'; v: string }
   | { t: 'done'; messageId: number; costGd: number; demo: boolean }
-  | { t: 'error'; message: string }
+  | { t: 'error'; message: string; terminal?: boolean }
 
 const titleFrom = (text: string) => {
   const t = text.replace(/\s+/g, ' ').trim()
@@ -79,130 +82,118 @@ const titleFrom = (text: string) => {
  * Send a message in a chat (creating it if chatId is empty) and stream the answer.
  * The caller holds nothing; this takes the user lock for the whole answer.
  */
-export async function* sendChat(user: User, input: { chatId?: string; tool: AiToolId; text: string }): AsyncGenerator<StreamEvent> {
-  const text = input.text.trim().slice(0, 4000)
-  if (text.length < 2) {
-    yield { t: 'error', message: 'Type a question first.' }
-    return
-  }
+interface ChatRequestData {
+  type: 'ai-chat'
+  chatId: string
+  tool: AiToolId
+  text: string
+  priceGd: number
+  history: ChatMsg[]
+  answer?: string
+  demo?: boolean
+}
 
-  // Resolve or create the chat (ownership checked).
-  let chatId = input.chatId ?? ''
-  let tool = input.tool
-  let history: ChatMsg[] = []
-  if (chatId) {
-    const existing = await getChat(user.id, chatId)
-    if (!existing) {
-      yield { t: 'error', message: 'Chat not found.' }
-      return
-    }
-    tool = existing.chat.tool
-    history = existing.messages
-  }
-  const isFollowUp = history.some((m) => m.role === 'assistant')
-  const priceGd = isFollowUp ? followUpPrice(tool) : AI_TOOLS[tool].priceGd
-  const cost = parseEther(String(priceGd))
-
-  // Everything that touches the balance runs under the user's lock.
+export async function* sendChat(user: User, input: { requestId: string; chatId?: string; tool: AiToolId; text: string }): AsyncGenerator<StreamEvent> {
   const events: StreamEvent[] = []
   let resolveNext: (() => void) | null = null
   let finished = false
-  const push = (e: StreamEvent) => {
-    events.push(e)
-    resolveNext?.()
-  }
-
+  const push = (event: StreamEvent) => { events.push(event); resolveNext?.() }
   const work = withUserLock(user.id, async () => {
-    await syncJars(user)
-    if ((await gdBalance(user.agentAddress)) < cost) {
-      push({ t: 'error', message: `This costs G$ ${priceGd}. Your jars fill every day as Jara claims your G$.` })
+    const text = input.text.trim().slice(0, 4000)
+    if (text.length < 2) throw new Error('Type a question first.')
+    const request = await moneyRequest<ChatRequestData>(user.id, `ai-chat:${input.requestId}`, { chatId: input.chatId ?? '', tool: input.tool, text })
+    if (!request.data) {
+      const existing = input.chatId ? await getChat(user.id, input.chatId) : null
+      if (input.chatId && !existing) throw new Error('Chat not found.')
+      const tool = existing?.chat.tool ?? input.tool
+      const history = existing?.messages ?? []
+      const priceGd = history.some((m) => m.role === 'assistant') ? followUpPrice(tool) : AI_TOOLS[tool].priceGd
+      await syncJars(user)
+      if ((await jarSpendable(user, 'ai')) < parseEther(String(priceGd))) throw new Error(`This costs G$ ${priceGd}. Add money to your AI jar first; your other jars are protected.`)
+      const chatId = input.chatId || `c_${randomBytes(8).toString('hex')}`
+      const data: ChatRequestData = { type: 'ai-chat', chatId, tool, text, priceGd, history }
+      await atomic(async (tx) => {
+        if (!input.chatId) await tx.execute({ sql: 'INSERT INTO ai_chats(id, user_id, tool, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', args: [chatId, user.id, tool, titleFrom(text), Date.now(), Date.now()] })
+        await tx.execute({ sql: "INSERT INTO ai_messages(chat_id, role, content, created_at) VALUES (?, 'user', ?, ?)", args: [chatId, text, Date.now()] })
+        await tx.execute({ sql: 'UPDATE money_requests SET data = ? WHERE id = ?', args: [JSON.stringify(data), request.id] })
+      })
+      request.data = data
+    }
+    const data = request.data
+    push({ t: 'chat', chatId: data.chatId, title: titleFrom(data.text), priceGd: data.priceGd })
+    if (request.result) {
+      push({ t: 'delta', v: data.answer ?? '' })
+      push(request.result as StreamEvent)
       return
     }
-    const reachable = await llmReachable()
-    if (!reachable && serverConfig().chain.mode !== 'mock') {
-      push({ t: 'error', message: 'Jara AI is offline for a moment. You were not charged. Try again soon.' })
-      return
-    }
-
-    const now = Date.now()
-    if (!chatId) {
-      chatId = `c_${randomBytes(8).toString('hex')}`
-      await run('INSERT INTO ai_chats (id, user_id, tool, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [chatId, user.id, tool, titleFrom(text), now, now])
-    }
-    await run('INSERT INTO ai_messages (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)', [chatId, 'user', text, now])
-    push({ t: 'chat', chatId, title: titleFrom(text), priceGd })
-
-    if (!reachable) {
-      // Demo build without an AI brain: show the layout, charge nothing.
-      const demo = `# Demo preview\n\nJara AI isn't connected on this build, so this is a placeholder, not a real answer. You were not charged.\n\n**You asked:** ${text.slice(0, 200)}`
-      push({ t: 'delta', v: demo })
-      const r = await run('INSERT INTO ai_messages (chat_id, role, content, cost_gd, created_at) VALUES (?, ?, ?, 0, ?)', [chatId, 'assistant', demo, Date.now()])
-      push({ t: 'done', messageId: Number(r.lastInsertRowid), costGd: 0, demo: true })
-      return
-    }
-
-    const messages: ChatMessage[] = [
-      { role: 'system', content: `${AI_BASE_PROMPT}\n\n${AI_TOOLS[tool].system}` },
-      ...history.slice(-12).map((m) => ({ role: m.role, content: m.content }) as ChatMessage),
-      { role: 'user', content: text },
-    ]
-    let answer = ''
-    try {
-      for await (const piece of chatStream(messages, isFollowUp ? 1600 : AI_TOOLS[tool].maxTokens)) {
-        answer += piece
-        push({ t: 'delta', v: piece })
+    if (!data.answer) {
+      const reachable = await llmReachable()
+      if (!reachable) {
+        if (serverConfig().chain.mode !== 'mock') throw new Error('Jara AI is offline. No payment was started.')
+        data.answer = `# Demo preview\n\nJara AI is not connected. You were not charged.\n\n**You asked:** ${text}`
+        data.demo = true
+        push({ t: 'delta', v: data.answer })
+      } else {
+        const messages: ChatMessage[] = [
+          { role: 'system', content: `${AI_BASE_PROMPT}\n\n${AI_TOOLS[data.tool].system}` },
+          ...data.history.slice(-12).map((m) => ({ role: m.role, content: m.content })),
+          { role: 'user', content: data.text },
+        ]
+        let answer = ''
+        // A partial stream is not a completed, chargeable answer.
+        for await (const piece of chatStream(messages, AI_TOOLS[data.tool].maxTokens)) {
+          answer += piece
+          push({ t: 'delta', v: piece })
+        }
+        if (!answer.trim()) throw new Error('Jara AI returned no answer. No payment was started.')
+        data.answer = answer.trim()
       }
-    } catch (err) {
-      console.error('[ai-chat] stream failed', err)
-    }
-    answer = answer.trim()
-    if (!answer) {
-      push({ t: 'error', message: 'Jara AI didn’t answer. You were not charged.' })
-      return
-    }
-
-    // Charge only now that a full answer exists.
-    if (!(await debitJars(user, 'ai', cost))) {
-      push({ t: 'error', message: 'Not enough G$.' })
-      return
-    }
-    let hash: string | undefined
-    try {
-      hash = await sendGdFromAgent(decryptAgentKey(user.agentKeyEnc), treasuryAddress(), cost)
-    } catch (err) {
-      console.error('[ai-chat] G$ payment failed after answer', user.id, err)
-    }
-    const saved = await run('INSERT INTO ai_messages (chat_id, role, content, cost_gd, created_at) VALUES (?, ?, ?, ?, ?)', [chatId, 'assistant', answer, priceGd, Date.now()])
-    await run('UPDATE ai_chats SET updated_at = ? WHERE id = ?', [Date.now(), chatId])
-    await run('INSERT INTO ai_runs (user_id, tool, input, output, cost_gd, demo, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)', [user.id, tool, text, answer, priceGd, Date.now()])
-    await logActivity(user.id, {
-      type: 'ai',
-      jar: 'ai',
-      amountWei: cost.toString(),
-      txHash: hash,
-      title: `${AI_TOOLS[tool].name}: ${titleFrom(text)}`,
-      detail: `Paid G$ ${Number(formatEther(cost)).toLocaleString()} from your AI jar`,
-    })
-    push({ t: 'done', messageId: Number(saved.lastInsertRowid), costGd: priceGd, demo: false })
-  })
-    .catch((err) => {
-      console.error('[ai-chat] failed', err)
-      push({ t: 'error', message: 'Something went wrong. You were not charged.' })
-    })
-    .finally(() => {
-      finished = true
-      resolveNext?.()
-    })
-
-  // Relay events as they are produced.
+      await request.save(data)
+    } else push({ t: 'delta', v: data.answer })
+    push(await finishChatPayment(user, request.id, data))
+  }).catch((err) => {
+    console.warn('[ai-chat]', err instanceof Error ? err.message : err)
+    push({ t: 'error', message: err instanceof Error ? err.message : 'Could not confirm the result. Retry the same request to check it.' })
+  }).finally(() => { finished = true; resolveNext?.() })
   for (;;) {
-    if (events.length) {
-      yield events.shift()!
-      continue
-    }
+    if (events.length) { yield events.shift()!; continue }
     if (finished) break
-    await new Promise<void>((r) => (resolveNext = r))
+    await new Promise<void>((resolve) => { resolveNext = resolve })
     resolveNext = null
   }
   await work
+}
+
+async function finishChatPayment(user: User, id: string, data: ChatRequestData): Promise<StreamEvent> {
+  const priceGd = data.demo ? 0 : data.priceGd
+  const cost = parseEther(String(priceGd))
+  let hash: string | undefined
+  try { hash = data.demo ? undefined : (await spendGd(user, cost, { id, jar: 'ai' })).hash }
+  catch (err) {
+    if (!(err instanceof PaymentFailedError)) throw err
+    const result: StreamEvent = { t: 'error', message: err.message, terminal: true }
+    await run('UPDATE money_requests SET result = ? WHERE id = ?', [JSON.stringify(result), id])
+    return result
+  }
+  return atomic(async (tx) => {
+    const row = (await tx.execute({ sql: 'SELECT result FROM money_requests WHERE id = ?', args: [id] })).rows[0]
+    if (row.result) return JSON.parse(String(row.result)) as StreamEvent
+    const saved = await tx.execute({ sql: "INSERT INTO ai_messages(chat_id, role, content, cost_gd, created_at) VALUES (?, 'assistant', ?, ?, ?)", args: [data.chatId, data.answer!, priceGd, Date.now()] })
+    await tx.execute({ sql: 'UPDATE ai_chats SET updated_at = ? WHERE id = ?', args: [Date.now(), data.chatId] })
+    if (!data.demo) {
+      await tx.execute({ sql: 'INSERT INTO ai_runs(user_id, tool, input, output, cost_gd, demo, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)', args: [user.id, data.tool, data.text, data.answer!, priceGd, Date.now()] })
+      await tx.execute({ sql: `INSERT INTO activity(user_id, type, jar, amount_wei, tx_hash, title, detail, operation_id, created_at) VALUES (?, 'ai', 'ai', ?, ?, ?, ?, ?, ?)`, args: [user.id, String(cost), hash!, `${AI_TOOLS[data.tool].name}: ${titleFrom(data.text)}`, `Paid G$ ${formatEther(cost)} from your AI jar`, id, Date.now()] })
+    }
+    const result: StreamEvent = { t: 'done', messageId: Number(saved.lastInsertRowid), costGd: priceGd, demo: Boolean(data.demo) }
+    await tx.execute({ sql: 'UPDATE money_requests SET result = ? WHERE id = ?', args: [JSON.stringify(result), id] })
+    return result
+  })
+}
+
+export async function recoverChatPayments(user: User) {
+  const rows = (await run('SELECT * FROM money_requests WHERE user_id = ? AND result IS NULL AND data IS NOT NULL AND id LIKE ?', [user.id, `${user.id}:ai-chat:%`])).rows
+  for (const row of rows) {
+    const data = JSON.parse(String(row.data)) as ChatRequestData
+    if (data.type === 'ai-chat' && data.answer) await withUserLock(user.id, () => finishChatPayment(user, String(row.id), data)).catch(() => undefined)
+  }
 }
