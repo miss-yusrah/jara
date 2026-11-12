@@ -37,4 +37,4 @@ The authenticated admin report confirmed live Celo + live FalconPay, referral li
 
 There were **zero active migrated accounts and five connected accounts awaiting upgrade**. All 26 retained wallet keys now use per-wallet envelopes under the **local** provider (rewrapping `pending: 0`), which does not remove server-held-key exposure or mean users have upgraded. No owner signatures were supplied on users' behalf. Old wallet balances, permissions and backups remain subject to the custody boundaries above.
 
-The original keyless deployment and contract receipts are documented in [deployment-2026-11-12.md](deployment-2026-11-12.md). No commit or push was performed, and no reviewer message was sent.
+The original keyless deployment and contract receipts are documented in [deployment-2026-11-12.md](deployment-2026-11-12.md). That rollout preceded the source commit. The remediation source is now recorded in commit `d3222d2dab8d07e20681d06f31c812ba7f6bf8b4`; see [the reviewer reply](goodbuilders-update.md) for permanent code links. No reviewer message has been sent.

@@ -1,45 +1,77 @@
-# GoodBuilders review update — draft for publication
+Hi GoodBuilders team,
 
-Status: deployed to [usejara.xyz](https://usejara.xyz) on November 12, 2026, with both contracts source-verified on Celo. Existing-user migration is incomplete: five connected users still need to approve the upgrade from Profile. Source links below are relative to this repository; publish them at the commit containing these changes. The [deployment record](deployment-2026-11-12.md) contains addresses, transaction receipts and live checks.
+Thank you for the review. We have implemented and deployed fixes covering the seven findings and the earlier custody concerns. Jara is live at [usejara.xyz](https://usejara.xyz). Please re-review [the remediation revision](https://github.com/miss-yusrah/jara/commit/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4), which supersedes the reviewed revision `807ab2b919a415ab271655cd932bcf92de389baa`.
 
-## 1. Agent-wallet custody
+Existing-user wallet migration is still pending owner approval. The upgrade is implemented and available, but we cannot sign the required wallet transactions on users’ behalf. Details and remaining exposure are below.
 
-We have integrated immutable per-owner claim contracts into onboarding, migration, daily claims and rewards. New keyless accounts have no agent private key. Claims are sent atomically to the owner's wallet; a server operator cannot choose another recipient. The owner can revoke the identity link and interact with the contract without Jara.
+**Agent-wallet custody**
 
-Existing users upgrade from their profile. The server requires a fresh owner signature bound to the Jara account and independently verifies the new identity link, old agent revocation, removal of the old direct treasury allowance, and contract owner/configuration. Old keys remain exportable after an owner signature for recovery of existing balances. Those balances and retained keys are still legacy exposure until users recover their funds.
+New production accounts use immutable, per-owner claim contracts and have no agent private key. Claims forward G$ atomically to the owner’s wallet; Jara cannot change the recipient. A separate spending contract enforces the owner’s total budget, UTC-day limit and expiry, with a fixed recipient and replay protection.
 
-We also added an immutable spending-policy contract. Upgraded users approve that contract separately; it enforces total and daily limits, expiry, a fixed recipient and replay prevention. A compromised server can still consume the remaining approved budget, and the treasury's own funds remain exposed to its server key. This bounds that authority rather than claiming to eliminate it.
+Existing users upgrade from Profile. Activation requires a fresh, account-bound owner signature and verifies the new identity link, revocation of the old agent link, and removal of the old direct treasury allowance. Owners can export their legacy key after a fresh signature to recover old balances. Real-money use cannot fall back to the fixed development encryption key, regardless of `NODE_ENV`.
 
-Code: [claim contract](../contracts/src/JaraClaimer.sol), [spending contract](../contracts/src/JaraSpending.sol), [activation and claim execution](../src/lib/claimers.ts), [onboarding](../src/app/api/onboard/route.ts), [daily job](../src/lib/daily.ts), [legacy key export](../src/app/api/wallet/key/route.ts).
+Both contracts are deployed on Celo and have Sourcify exact-match source verification:
 
-The combined contract flow passed on a local Celo mainnet fork at block 82581035 with two independently selected public verified identities. The factory and spending contract are now deployed on Celo, with Sourcify exact-match verification. At activation, zero existing users had migrated and five connected users awaited upgrade. No production owner-migration receipt is claimed. At the safety follow-up, the database retained 26 wallet keys rewrapped into per-wallet envelopes under the local server-held secret; AWS KMS is not enabled in production. These legacy keys and allowances remain exposed to a server compromise until their owners revoke the old permissions and recover balances. New signups use the keyless path. The upgrade and recovery paths are live, but this deployment alone does not complete remediation for existing users.
+- Claimer factory: `0x62A5700C5b6fb6Aedea0dD84b79D5722B7727a3a`
+- Spending contract: `0x98720954737585183F01a5f6eaCDD8442e9c780F`
 
-## 2. JAR-06 — server-side approval
+At the November 12 safety deployment, five connected users awaited upgrade and none had activated it. The 26 retained wallet keys use per-wallet envelope encryption under a server-held secret; AWS KMS is **not** enabled. Existing balances, retained keys and unrevoked permissions remain exposed until owners migrate and recover their funds. A compromised server can also consume an upgraded user’s authorized spending budget and access the treasury’s own funds. We are not claiming those residual risks have disappeared.
 
-The assistant's spending and payment-setting tools create stored approval requests. Explicit user confirmation executes the stored arguments once, with expiry and replay protection. This covers paid AI help, jar settings, allocation changes, and enabling paid scheduled jobs. The safety follow-up also pauses existing recurring settings once so users explicitly enable them again; already submitted payments remain recoverable. Disabling them remains immediate.
+Code: [claim contracts](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/contracts/src/JaraClaimer.sol), [spending policy](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/contracts/src/JaraSpending.sol), [migration checks](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/claimers.ts), [legacy key export](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/app/api/wallet/key/route.ts), [key-provider checks](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/custody.ts).
 
-New purchases charge only the reviewed amount; old gas debt is reserved separately, not silently appended. Keyless claims are sponsored without accruing new gas debt.
+**J-01 — Demo/live separation**
 
-Code: [approval records](../src/lib/agent/approvals.ts), [tool dispatch](../src/lib/agent/index.ts), [payment boundary](../src/lib/spend.ts), [review regression tests](../tests/review-findings.test.cjs).
+Startup rejects incompatible chain/provider modes and demo deployments containing live provider or treasury/reporting signing credentials. Separate default databases and a persistent mode marker prevent switching a database between simulated and real funds. Purchases check the mode again before provider delivery.
 
-## 3. J-01 — demo/live isolation
+Production was verified as **real Celo G$ + live FalconPay**, with `DEMO_BILLS=false`; VTpass is inactive. Demo deposits are blocked.
 
-Bill payments require both money sides to match: simulated G$ with a simulated provider, or real G$ with a live provider. Mixed configurations fail startup, and purchase boundaries disable bills and demo top-ups. Separate default database files and a persistent mode marker prevent demo/live database reuse. The purchase boundary checks again before provider delivery; a changed configuration cannot silently spend across modes. This includes VTpass and FalconPay.
+Code: [configuration and startup validation](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/env.ts), [database isolation](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/db.ts), [purchase boundary](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/bills.ts).
 
-Code: [configuration validation](../src/lib/env.ts), [purchase boundary](../src/lib/bills.ts), [demo top-up](../src/app/api/demo/deposit/route.ts).
+**J-02 — Durable payment recovery**
 
-**Production verified November 12:** the authenticated admin report returned `mode: live`, `problem: null`, `chain: celo`, `provider: falconpay`, and `billsLive: true`. `DEMO_BILLS=false`; the active FalconPay credential is live. VTpass is inactive. A live smoke check confirmed that demo deposits are rejected.
+Orders, quotes and provider references are persisted before charging. Signed transaction bytes and hashes are persisted before broadcast. Recovery uses the same operation ID and provider reference after timeouts or restarts. Unknown outcomes stay pending and block conflicting automatic purchases; they do not trigger another purchase or a speculative refund. The production snapshot contained no unresolved legacy bill orders lacking operation journals.
 
-## 4. JAR-05 — unique-identity referrals
+Code: [orders and settlement](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/bills.ts), [transaction journal](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/chain-outbox.ts), [automatic-payment recovery](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/auto-pay.ts).
 
-Referral rewards are reserved once per verified GoodDollar root identity across the application. Multiple Jara accounts for one identity do not create extra rewards, self-referrals are excluded, and previously paid per-account rewards count against their identity. The verification uses the active claim contract for migrated accounts.
+**J-03 — Refund and reward accuracy**
 
-Code: [referral rewards](../src/lib/rewards.ts), [identity deduplication storage/migration](../src/lib/db.ts), [regression tests](../tests/review-findings.test.cjs).
+Payments require a successful receipt and the expected token transfer. Refund obligations remain pending until confirmed and are retried with the original ID. Reward retries reuse the original transaction, so a lost confirmation cannot authorize a second payout.
 
-## Additional seven-finding review
+Code: [receipt verification](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/chain-outbox.ts), [charges and refunds](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/spend.ts), [reward payouts](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/rewards.ts).
 
-The [safety follow-up](safety-review-closure.md) covers the separate J-01–J-07 report, including durable payment recovery, receipt verification, confirmation replay protection, Telegram private-chat/sender enforcement, referral treasury caps and live-money secret requirements. The follow-up was activated at 12:10:05 UTC on November 12; its deployment section records the live checks and remaining migration requirements.
+**J-04 — Single-use, bill-bound confirmations**
 
-## Evidence and remaining work
+Confirmations identify the exact request and include expiry and the displayed quote. Database locks and durable request records prevent duplicate execution. Old buttons cannot approve a newer bill; retries return or resume the original order.
 
-All 118 application tests, typecheck, lint and the production Webpack build passed for the safety follow-up. Production HTTP checks verified keyless signup and deposit safeguards; public home, app and session endpoints returned 200, and unauthenticated admin access returned 401. Scheduled jobs were restored and the minute worker reported a successful run. See the [deployment record](deployment-2026-11-12.md) and [rollout runbook](keyless-rollout.md). Before the November 16 update, refresh the remaining-user count and attach an owner-approved migration receipt if available. Five connected users still needed to revoke their legacy agent and allowance at deployment; old balance recovery remains available. No independent contract audit or interactive production wallet walkthrough has been completed.
+Code: [confirmation execution](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/agent/index.ts), [immutable requests](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/money-request.ts), [database locks](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/money-lock.ts).
+
+**J-05 / earlier JAR-06 — Enforced approval for AI spending**
+
+Paid AI helpers, payment-setting changes, budget moves and enabling paid scheduled jobs create stored requests. Explicit user approval executes the stored arguments at the shown price. We also paused pre-existing auto-pay and paid-job settings for renewed consent, retaining their details and already-submitted payment recovery records.
+
+Code: [approval records](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/agent/approvals.ts), [tool authorization](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/agent/index.ts), [one-time consent reset](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/db.ts).
+
+**J-06 — Telegram sender authorization**
+
+Messages and callbacks require a private chat and a matching, non-bot sender. Group linking and group financial commands are rejected before account actions. Scheduled notifications cannot send account data to group IDs. The migration disconnects any legacy group links and rotates affected session/link credentials; none were present in the production snapshot.
+
+Code: [webhook authorization](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/app/api/telegram/route.ts), [outbound restrictions](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/telegram.ts).
+
+**J-07 / earlier JAR-05 — Identity-based referrals and treasury caps**
+
+Referral rewards count each verified GoodDollar root identity once across the app, exclude self-referrals, and include historical rewards. Atomic reservations enforce a **G$10,000 lifetime referral budget** and **G$2,000 UTC-day limit for new reservations** across all referrers. Unknown payouts retain their reservation through retries and restarts. These caps cover referrals, not every treasury expense.
+
+Code: [identity checks and budget reservations](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/rewards.ts), [historical accounting](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/src/lib/db.ts).
+
+**Validation and remaining work**
+
+- 118 application tests, typecheck, lint and the production build passed.
+- Contract checks included 16 local Solidity tests and the combined migration/claim/spending flow on a Celo fork with two verified identities.
+- Live checks covered keyless signup, blocked demo deposits, Telegram group/foreign-sender rejection, public endpoints and admin access control. Migration was tested against a private production database snapshot before activation.
+- Existing owners still need to approve their wallet migration and recover old balances. We have not completed an independent contract audit or a production owner-migration walkthrough, and do not present tests or source verification as substitutes for that review.
+
+[Detailed deployment evidence](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/docs/safety-review-closure.md) and [contract deployment receipts and migration runbook](https://github.com/miss-yusrah/jara/blob/d3222d2dab8d07e20681d06f31c812ba7f6bf8b4/docs/keyless-rollout.md) are included in the repository. Please let us know what further evidence you need for re-review.
+
+Thank you,
+
+The Jara team
