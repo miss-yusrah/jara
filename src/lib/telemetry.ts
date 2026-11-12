@@ -40,7 +40,7 @@ async function pending(limit: number): Promise<{ id: string; entry: Entry }[]> {
   const demo = serverConfig().chain.mode === 'mock'
   const out: { id: string; entry: Entry }[] = []
   const joins = await run(
-    `SELECT u.id, u.agent_address FROM users u
+    `SELECT u.id, CASE WHEN u.claimer_active = 1 THEN u.claimer_address ELSE u.agent_address END AS agent_address FROM users u
      WHERE u.connected = 1 AND NOT EXISTS (SELECT 1 FROM telemetry_sent t WHERE t.id = 'join:' || u.id)
      ORDER BY u.created_at LIMIT ?`,
     [limit],
@@ -51,7 +51,7 @@ async function pending(limit: number): Promise<{ id: string; entry: Entry }[]> {
   }
   if (out.length >= limit) return out
   const acts = await run(
-    `SELECT a.id, a.type, a.amount_wei, u.agent_address FROM activity a JOIN users u ON u.id = a.user_id
+    `SELECT a.id, a.type, a.amount_wei, CASE WHEN u.claimer_active = 1 THEN u.claimer_address ELSE u.agent_address END AS agent_address FROM activity a JOIN users u ON u.id = a.user_id
      WHERE a.status = 'done' AND a.amount_wei IS NOT NULL AND a.type IN (${ACTIVITY_KINDS.map(() => '?').join(',')})
        AND NOT EXISTS (SELECT 1 FROM telemetry_sent t WHERE t.id = 'act:' || a.id)
      ORDER BY a.id LIMIT ?`,

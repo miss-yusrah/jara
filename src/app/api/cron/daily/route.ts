@@ -7,6 +7,7 @@ import { sendMessage } from '@/lib/telegram'
 import { flushTelemetry } from '@/lib/telemetry'
 import { recoverChainTransactions, recoverUserPayments } from '@/lib/money-recovery'
 import { listConnectedUsers } from '@/lib/users'
+import { rewrapAgentKeys } from '@/lib/wallets'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -22,6 +23,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   await recoverChainTransactions()
+  // Move any wallet keys not yet under the configured key provider (a no-op once all are).
+  const custody = await rewrapAgentKeys().catch((err) => ({ error: err instanceof Error ? err.message : String(err) }))
   for (const user of await listConnectedUsers()) await recoverUserPayments(user).catch((err) => console.warn('[recovery]', user.id, err))
   // Finish any bills a provider confirmed late (backup for the webhook).
   const bills = await settlePendingBills().catch((err) => ({ error: err instanceof Error ? err.message : String(err) }))
@@ -29,5 +32,5 @@ export async function GET(req: Request) {
     if (user.tgChatId) await sendMessage(user.tgChatId, text)
   })
   const telemetry = await flushTelemetry().catch((err) => ({ error: err instanceof Error ? err.message : String(err) }))
-  return NextResponse.json({ ran: results.length, results, bills, telemetry })
+  return NextResponse.json({ ran: results.length, results, bills, telemetry, custody })
 }

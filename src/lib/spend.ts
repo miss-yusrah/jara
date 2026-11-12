@@ -18,7 +18,7 @@ import type { JarKind } from './users'
 import { serverConfig } from './env'
 import { getUserById, type User } from './users'
 import type { Row } from '@libsql/client'
-import { decryptAgentKey } from './wallets'
+import { agentKey } from './wallets'
 
 // Where Jara's G$ comes from.
 //
@@ -66,6 +66,7 @@ export async function getGasOwed(userId: string): Promise<bigint> {
 }
 
 export async function spendMode(user: User): Promise<SpendMode> {
+  if (user.claimerActive) return 'wallet'
   if (!user.rootAddress || serverConfig().chain.mode === 'mock') return 'jar'
   return (await gdAllowance(user.rootAddress)) > 0n ? 'wallet' : 'jar'
 }
@@ -77,17 +78,17 @@ export async function spendingPower(user: User): Promise<SpendingPower> {
   // so funds cannot appear in both wallets during that transfer.
   const block = await balanceBlock()
   const [agentWei, owedWei, walletWei, allowanceWei] = await Promise.all([
-    gdBalance(user.agentAddress, block),
+    user.agentKeyEnc === 'keyless' ? Promise.resolve(0n) : gdBalance(user.agentAddress, block),
     getGasOwed(user.id),
     useWallet ? gdBalance(root!, block) : Promise.resolve(0n),
-    useWallet ? gdAllowance(root!, block) : Promise.resolve(0n),
+    useWallet ? gdAllowance(root!, block, user.claimerActive) : Promise.resolve(0n),
   ])
-  const mode: SpendMode = allowanceWei > 0n ? 'wallet' : 'jar'
+  const mode: SpendMode = user.claimerActive || allowanceWei > 0n ? 'wallet' : 'jar'
   const agentAvailWei = pos(agentWei - owedWei)
   const pullableWei = mode === 'wallet' ? min(walletWei, allowanceWei) : 0n
   // Fees the Jara wallet can't cover come out of what we can pull.
   const owedFromWallet = pos(owedWei - agentWei)
-  const totalWei = mode === 'wallet' ? agentAvailWei + pos(pullableWei - owedFromWallet) : agentAvailWei
+  const totalWei = user.claimerActive ? pos(pullableWei - owedWei) : mode === 'wallet' ? agentAvailWei + pos(pullableWei - owedFromWallet) : agentAvailWei
   return { mode, agentWei, owedWei, agentAvailWei, walletWei, allowanceWei, pullableWei, totalWei }
 }
 
@@ -125,11 +126,12 @@ export async function spendGd(input: User, amount: bigint, request: { id: string
       if (await hasPendingFunds(user.id, user.rootAddress)) throw new TransferPendingError()
       const p = await spendingPower(user)
       // Never split a purchase between the agent wallet and the user's wallet.
-      const owedFromWallet = pos(p.owedWei - p.agentWei)
-      const source = p.agentAvailWei >= amount ? 'jar' : pos(p.pullableWei - owedFromWallet) >= amount ? 'wallet' : null
+      const owedFromWallet = user.claimerActive ? p.owedWei : pos(p.owedWei - p.agentWei)
+      const source = !user.claimerActive && p.agentAvailWei >= amount ? 'jar' : pos(p.pullableWei - owedFromWallet) >= amount ? 'wallet' : null
       if (!source) throw new Error('One wallet must cover this purchase after reserving outstanding fees. Move funds explicitly or choose a smaller amount.')
-      // Network fees Jara fronted (shown on each claim) are repaid inside this same transfer.
-      const fees = source === 'jar' ? min(p.owedWei, p.agentWei - amount) : min(p.owedWei, pos(p.pullableWei - amount))
+      // Charge only the reviewed amount. Legacy gas debt stays reserved for
+      // separate reconciliation; it must not be appended to an approved purchase.
+      const fees = 0n
       await atomic(async (tx) => {
         const all = (await tx.execute({ sql: 'SELECT kind, balance_wei FROM jars WHERE user_id = ?', args: [user.id] })).rows
         const balance = BigInt(String(all.find((r) => r.kind === request.jar)?.balance_wei ?? '0'))
@@ -148,8 +150,8 @@ export async function spendGd(input: User, amount: bigint, request: { id: string
     let result: { hash: string; feeWei: bigint }
     try {
       result = payment.source === 'wallet'
-        ? await pullGdFromWallet(payment.refund_address as Address, amount + collectedFees, txId)
-        : await transferFromAgent(decryptAgentKey(user.agentKeyEnc), treasuryAddress(), amount + collectedFees, { sponsor: true, operationId: txId })
+        ? await pullGdFromWallet(payment.refund_address as Address, amount + collectedFees, txId, user.claimerActive)
+        : await transferFromAgent(await agentKey(user), treasuryAddress(), amount + collectedFees, { sponsor: true, operationId: txId })
     } catch (err) {
       // A timeout is NOT evidence that no money moved.
       if (err instanceof TransferRevertedError || !(await hasSubmittedTransaction(txId))) {
@@ -213,9 +215,43 @@ export async function withdrawToWallet(input: User, requestId: string): Promise<
     request.data = { amount: String(p.agentAvailWei), to: user.rootAddress! }
     await request.save(request.data)
   }
-  const r = await transferFromAgent(decryptAgentKey(user.agentKeyEnc), request.data.to, BigInt(request.data.amount), { sponsor: true, operationId: request.id })
+  const r = await transferFromAgent(await agentKey(user), request.data.to, BigInt(request.data.amount), { sponsor: true, operationId: request.id })
   await request.finish({ hash: r.hash, amount: request.data.amount })
   return { hash: r.hash, amountWei: BigInt(request.data.amount) }
+}
+
+/**
+ * Keep the Jara-managed wallet empty. Once a person spends from their own wallet (they
+ * approved a limit), G$ that lands in the wallet Jara holds a key for (claims, rewards)
+ * is sent straight on to them, so that key guards next to nothing. Fees Jara is owed stay
+ * behind, exactly as with a manual withdrawal. `tag` names the occasion (e.g. the day's
+ * claim) so a repeat run never sends twice. Never throws: an interrupted transfer is
+ * resumed by payment recovery under the same request.
+ */
+export async function forwardToOwner(user: User, tag: string): Promise<{ hash: string; amountWei: bigint } | null> {
+  if (user.claimerActive) return null // Contract claims/rewards already go to the owner.
+  const cfg = serverConfig().chain
+  if (cfg.mode !== 'celo' || !cfg.forwardClaims || !user.connected || !user.rootAddress) return null
+  try {
+    return await withAccountLock(user.id, async () => {
+      const key = `forward:${tag}`
+      const started = (await run('SELECT 1 FROM money_requests WHERE id = ? AND data IS NOT NULL', [`${user.id}:withdraw:${key}`])).rows.length > 0
+      if (!started) {
+        const p = await spendingPower(user)
+        // Without a spending limit the Jara wallet is what this person pays from: leave it.
+        if (p.mode !== 'wallet' || p.agentAvailWei < BigInt(Math.max(0, Math.round(cfg.forwardMinGd))) * 10n ** 18n) return null
+      }
+      const sent = await withdrawToWallet(user, key)
+      if (!sent) return null
+      await run(`INSERT OR IGNORE INTO activity (user_id, type, amount_wei, tx_hash, title, detail, created_at, operation_id)
+        VALUES (?, 'move', ?, ?, ?, ?, ?, ?)`,
+      [user.id, String(sent.amountWei), sent.hash, `Sent ${gdText(sent.amountWei)} to your wallet`, 'Jara keeps your claimed G$ in your own wallet, not in a wallet it holds the key for.', Date.now(), `${user.id}:withdraw:${key}`])
+      return sent
+    })
+  } catch (err) {
+    console.warn('[forward] deferred', user.id, err instanceof Error ? err.message.split('\n')[0] : 'error')
+    return null
+  }
 }
 
 export const gdText = (wei: bigint) => `G$ ${Number(formatEther(wei)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`

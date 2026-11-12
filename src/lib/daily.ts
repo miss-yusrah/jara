@@ -4,11 +4,12 @@ import { GasLowError, claimUbi, sendGdFromTreasury } from './chain'
 import { atomic, run } from './db'
 import { gdForCeloFee } from './price'
 import { authorizedUser } from './wallet-authorization'
-import { spendMode } from './spend'
+import { forwardToOwner, spendMode } from './spend'
 import { serverConfig } from './env'
 import { snapshot, syncJars, withUserLock } from './jars'
 import { listConnectedUsers, logActivity, updateUser, type User } from './users'
-import { decryptAgentKey } from './wallets'
+import { agentKey } from './wallets'
+import { claimViaContract, rewardDestination } from './claimers'
 
 export function lagosDay(offsetDays = 0): string {
   const d = new Date(Date.now() + offsetDays * 86_400_000)
@@ -43,8 +44,10 @@ export async function runDaily(user: User, _opts: { force?: boolean } = {}): Pro
         let walletMode = false
         try {
           // Wallet mode: Jara fronts the CELO fee and takes it back from the claimed G$ (shown on the claim).
-          walletMode = (await spendMode(user)) === 'wallet'
-          result = await claimUbi(decryptAgentKey(user.agentKeyEnc), { sponsor: walletMode, operationId: `claim:${user.id}:${today}` })
+          walletMode = !user.claimerActive && (await spendMode(user)) === 'wallet'
+          result = user.claimerActive
+            ? await claimViaContract(user, `keyless-claim:${user.id}:${today}`)
+            : await claimUbi(await agentKey(user), { sponsor: walletMode, operationId: `claim:${user.id}:${today}` })
 
         } catch (err) {
           if (!(err instanceof GasLowError)) throw err
@@ -83,12 +86,15 @@ export async function runDaily(user: User, _opts: { force?: boolean } = {}): Pro
         if (!seen.rows.length) {
           try {
             const amount = parseEther(String(streakRewardGd))
-            const hash = await sendGdFromTreasury(user.agentAddress, amount, id)
+            const hash = await sendGdFromTreasury(await rewardDestination(user, id), amount, id)
             await run(`INSERT OR IGNORE INTO activity(user_id, type, amount_wei, tx_hash, title, operation_id, created_at) VALUES (?, 'reward', ?, ?, ?, ?, ?)`, [user.id, String(amount), hash, `${streak}-day streak bonus`, id, Date.now()])
             reward = amount
           } catch (err) { console.warn('[daily] reward awaiting confirmation', err) }
         }
       }
+      // The claim (and anything already sitting there) goes on to the person's own wallet.
+      const forwarded = await forwardToOwner(user, `${today}:claim`)
+      if (forwarded && claimed > 0n) lines.push('📤 It’s in your own wallet now.')
       await syncJars(user)
     })
 

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createClient, type Client, type InValue, type Transaction } from '@libsql/client'
@@ -7,6 +7,7 @@ import { serverConfig } from './env'
 // SQLite locally (file:data/jara.db), Turso/libSQL in production.
 // G$ amounts are stored as wei strings (18 decimals on Celo).
 const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS referral_budget (id TEXT PRIMARY KEY, amount_gd INTEGER NOT NULL, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS exam_attempts (
     run_id INTEGER PRIMARY KEY REFERENCES ai_runs(id), user_id TEXT NOT NULL REFERENCES users(id),
     answers TEXT NOT NULL DEFAULT '[]', current_question INTEGER NOT NULL DEFAULT 0,
@@ -132,6 +133,31 @@ const SCHEMA = [
     created_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, reward_key)
   )`,
+  // Actions the AI assistant asked for that charge G$ or change payment settings. They run
+  // only after the user approves this exact stored request (see lib/agent/approvals.ts).
+  `CREATE TABLE IF NOT EXISTS approvals (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users (id),
+    tool TEXT NOT NULL,
+    args TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    cost_gd INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    result TEXT,
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER
+  )`,
+  `CREATE INDEX IF NOT EXISTS approvals_user_idx ON approvals (user_id, status)`,
+  // Each time an owner revealed their Jara wallet key; a signature works once.
+  `CREATE TABLE IF NOT EXISTS key_exports (signature TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users (id), created_at INTEGER NOT NULL)`,
+  // One referral reward per verified GoodDollar identity, ever: the identity (root wallet),
+  // not the Jara account, is what makes a referred person unique.
+  `CREATE TABLE IF NOT EXISTS referral_identities (
+    root_address TEXT PRIMARY KEY,
+    referrer_id TEXT NOT NULL REFERENCES users (id),
+    referred_user_id TEXT NOT NULL REFERENCES users (id),
+    created_at INTEGER NOT NULL
+  )`,
   // Simulated balances for CHAIN_MODE=mock.
   `CREATE TABLE IF NOT EXISTS mock_balances (address TEXT PRIMARY KEY, wei TEXT NOT NULL)`,
   // Proactive jobs the user switched on: daily exam drills, opportunity scout, verification reminders.
@@ -173,6 +199,9 @@ async function connect(): Promise<Client> {
   await client.batch(SCHEMA, 'write')
   // Columns added after the first release.
   for (const sql of [
+    'ALTER TABLE users ADD COLUMN claimer_address TEXT',
+    'ALTER TABLE users ADD COLUMN claimer_factory TEXT',
+    'ALTER TABLE users ADD COLUMN claimer_active INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN skills TEXT NOT NULL DEFAULT \'[]\'',
     'ALTER TABLE users ADD COLUMN city TEXT',
     'ALTER TABLE users ADD COLUMN referred_by TEXT',
@@ -197,45 +226,52 @@ async function connect(): Promise<Client> {
       /* column already exists */
     }
   }
-  await leaveDemoMode(client, url)
+  await leaveDemoMode(client)
+  await renewRecurringConsent(client)
+  // Referral rewards paid before identities were tracked (keyed "referral-<account id>")
+  // count against that account's identity, so the same person is never paid for twice.
+  await client.execute(`INSERT OR IGNORE INTO referral_identities (root_address, referrer_id, referred_user_id, created_at)
+    SELECT lower(u.root_address), r.user_id, u.id, MIN(r.created_at)
+    FROM rewards_paid r JOIN users u ON u.id = substr(r.reward_key, 10)
+    WHERE r.reward_key GLOB 'referral-u_*' AND u.root_address IS NOT NULL
+    GROUP BY lower(u.root_address)`)
+  // Count historical confirmed and uncertain payouts against the same lifetime budget.
+  await client.execute(`INSERT OR IGNORE INTO referral_budget(id, amount_gd, created_at)
+    SELECT 'reward:' || user_id || ':' || reward_key, amount_gd, created_at FROM rewards_paid WHERE reward_key GLOB 'referral-*'`)
+  await client.execute(`INSERT OR IGNORE INTO referral_budget(id, amount_gd, created_at)
+    SELECT id, CAST(json_extract(intent, '$.transfer.amount') AS REAL) / 1e18, created_at FROM chain_transactions
+    WHERE id GLOB 'reward:*:referral-*' AND json_extract(intent, '$.transfer.amount') IS NOT NULL`)
   return client
 }
 
-/**
- * Runs once, the first time the app starts with CHAIN_MODE=celo on a database
- * that was used in demo mode. Demo balances, claims, rewards and "connections"
- * were simulated, so they're cleared: otherwise real treasury G$ could be paid
- * out for demo activity (weekly saver, first AI, referrals), and demo users
- * would look connected without an on-chain link. Accounts, chats and settings stay.
- */
-async function leaveDemoMode(client: Client, url: string) {
+/** A database is permanently assigned to one money mode. Never erase journals on a mode switch. */
+async function leaveDemoMode(client: Client) {
   await client.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
   const mode = serverConfig().chain.mode
-  const stored = (await client.execute("SELECT value FROM meta WHERE key = 'chain_mode'")).rows[0]?.value as string | undefined
-  if (mode !== 'celo') {
-    if (!stored) await client.execute({ sql: "INSERT INTO meta (key, value) VALUES ('chain_mode', ?)", args: [mode] })
-    return
-  }
-  if (stored === 'celo') return
-  if (url.startsWith('file:')) {
-    const file = url.slice('file:'.length)
-    if (existsSync(file)) copyFileSync(file, `${file}.demo-backup-${Date.now()}`)
-  }
-  await client.batch(
-    [
-      'UPDATE users SET connected = 0, root_address = NULL, streak = 0, last_claim_day = NULL, pending_action = NULL',
-      "UPDATE jars SET balance_wei = '0', last_paid_at = NULL",
-      'DELETE FROM activity',
-      'DELETE FROM rewards_paid',
-      'DELETE FROM mock_balances',
-      // Demo joins were logged on-chain as demo; let real connections be logged again as real.
-      "DELETE FROM telemetry_sent WHERE id LIKE 'join:%'",
-      'UPDATE ai_runs SET demo = 1',
-      "INSERT INTO meta (key, value) VALUES ('chain_mode', 'celo') ON CONFLICT (key) DO UPDATE SET value = 'celo'",
-    ],
-    'write',
-  )
-  console.warn('[jara] switched to CHAIN_MODE=celo: demo balances, activity and connections cleared')
+  const previous = (await client.execute("SELECT value FROM meta WHERE key = 'chain_mode'")).rows[0]
+  if (!previous && Number((await client.execute('SELECT COUNT(*) AS n FROM users')).rows[0].n) > 0) { client.close(); throw new Error('Existing database has no money-mode marker. Verify its provenance before assigning a mode.') }
+  await client.execute({ sql: "INSERT OR IGNORE INTO meta (key, value) VALUES ('chain_mode', ?)", args: [mode] })
+  const stored = (await client.execute("SELECT value FROM meta WHERE key = 'chain_mode'")).rows[0]?.value
+  if (stored !== mode) { client.close(); throw new Error('Database money mode does not match CHAIN_MODE. Use a separate database; existing funds and journals are unchanged.') }
+}
+
+/** Old recurring settings had no enforceable consent. Pause once, retaining settings and recovery journals. */
+async function renewRecurringConsent(client: Client) {
+  const tx = await client.transaction('write')
+  try {
+    const claimed = await tx.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('consent_reset_v1', 'done')")
+    if (claimed.rowsAffected) {
+      await tx.execute(`INSERT INTO messages(user_id, role, content, created_at)
+        SELECT id, 'assistant', 'For your safety, existing automatic bill payments and paid scheduled jobs have been paused. Review your settings and explicitly enable them again. Payments already submitted will still be reconciled.', ${Date.now()}
+        FROM users WHERE EXISTS (SELECT 1 FROM jars WHERE user_id = users.id AND auto_pay = 1)
+        OR EXISTS (SELECT 1 FROM agent_jobs WHERE user_id = users.id AND (exam_on = 1 OR scout_on = 1))`)
+      await tx.execute('UPDATE jars SET auto_pay = 0')
+      await tx.execute('UPDATE agent_jobs SET exam_on = 0, scout_on = 0')
+      // Revoke sessions and login links potentially exposed in group chats.
+      await tx.execute("UPDATE users SET tg_chat_id = NULL, session_token = lower(hex(randomblob(24))), link_code = lower(hex(randomblob(12))) WHERE tg_chat_id IS NOT NULL AND (tg_chat_id GLOB '*[^0-9]*' OR tg_chat_id NOT GLOB '[1-9]*')")
+    }
+    await tx.commit()
+  } catch (err) { await tx.rollback(); throw err } finally { tx.close() }
 }
 
 export async function run(sql: string, args: InValue[] = []) {

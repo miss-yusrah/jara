@@ -30,6 +30,8 @@ async function post(req: Request) {
     if (!body.actionId) return bad('Review this bill again before confirming.')
     reply = await resolvePending(user.id, body.confirm, body.actionId)
     await run('INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)', [user.id, 'assistant', reply.text, Date.now()])
+    // e.g. the first exam drill that an approved request produced.
+    for (const extra of reply.extra ?? []) await run('INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)', [user.id, 'assistant', extra, Date.now()])
   } else {
     const text = typeof body.text === 'string' ? body.text.trim().slice(0, 500) : ''
     if (!text) return bad('Say something')

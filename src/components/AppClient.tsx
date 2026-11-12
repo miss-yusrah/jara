@@ -4,13 +4,14 @@ import Link from 'next/link'
 import { clientRequest } from '@/lib/client-request'
 import { ApiError, readApiResponse } from '@/lib/api-response'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPublicClient, createWalletClient, custom, http, parseEther, type EIP1193Provider } from 'viem'
+import { createPublicClient, createWalletClient, custom, getAddress, http, parseEther, type EIP1193Provider } from 'viem'
 import { celo } from 'viem/chains'
 import { DISCOS, DISCO_INFO, NETWORKS, NETWORK_INFO, detectNetwork, formatNgn } from '@/lib/catalog'
 import { Icon, type IconName } from './Icon'
 import { Jar, type JarColor, type JarIcon } from './Jar'
 import { Markdown } from './Markdown'
-import { walletLoginMessage } from '@/lib/wallet-login'
+import { walletClaimerMessage, walletKeyExportMessage, walletLoginMessage } from '@/lib/wallet-login'
+import { spendingPolicyAbi } from '@/lib/spending-policy'
 import { useSheetDialog } from './useSheetDialog'
 import { DashboardNav, dashboardView, type DashboardView } from './DashboardNav'
 import { faceVerificationLink, requestAddress, walletErrorMessage } from '@/lib/wallet-connect'
@@ -52,12 +53,16 @@ interface State {
     name: string | null
     rootAddress: string | null
     agentAddress: string
+    claimerAddress: string | null
+    claimerActive: boolean
+    hasLegacyKey: boolean
     connected: boolean
     streak: number
     telegramLinked: boolean
     telegramLink: string | null
     hasPending: boolean
     pendingId: string | null
+    pendingConfirm: ConfirmCard | null
     lastRunAt: number | null
     inviteLink: string
   }
@@ -72,7 +77,7 @@ interface State {
   snapshot: { jars: JarView[]; totalGd: number; freeGd: number; freeNgn: number; ngnPerGd: number; walletGd: number | null; gas: { celo: number; perTxCelo: number } | null; mode: 'wallet' | 'jar'; claimedGd: number; limitLeftGd: number; feesOwedGd: number }
   activity: Activity[]
   messages: Msg[]
-  config: { chainMode: 'celo' | 'mock'; provider: string; billsLive: boolean; llm: string; treasury: string | null; limitGd: number }
+  config: { chainMode: 'celo' | 'mock'; keylessAvailable: boolean; spendingContract: string | null; dailyLimitGd: number; policyDays: number; provider: string; billsLive: boolean; llm: string; treasury: string | null; limitGd: number }
 }
 
 const JAR_COLOR: Record<JarView['kind'], JarColor> = { light: 'crest', data: 'mandarin', airtime: 'forest', ai: 'mandarin' }
@@ -81,6 +86,8 @@ const JAR_LID: Record<JarView['kind'], string> = { light: '#ffc72c', data: '#ffc
 const IDENTITY = '0xC361A6E67822a0EDc17D899227dd9FC50BD62F42'
 const CONNECT_ABI = [
   { type: 'function', name: 'connectAccount', stateMutability: 'nonpayable', inputs: [{ name: 'account', type: 'address' }], outputs: [] },
+  { type: 'function', name: 'disconnectAccount', stateMutability: 'nonpayable', inputs: [{ name: 'account', type: 'address' }], outputs: [] },
+  { type: 'function', name: 'getWhitelistedRoot', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'address' }] },
 ] as const
 const GD_TOKEN = '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A'
 const APPROVE_ABI = [
@@ -88,9 +95,13 @@ const APPROVE_ABI = [
 ] as const
 
 /** Ask the person's wallet to set Jara's spending limit (0 turns it off). */
-async function setSpendingLimit(provider: EIP1193Provider, spender: string, gd: number) {
+/** A bill, or an action the assistant asked for, waiting for the user's confirmation. */
+type ConfirmCard = { id: string; summary: string; gd: number; title?: string; action?: string }
+
+async function setSpendingLimit(provider: EIP1193Provider, spender: string, gd: number, expectedOwner?: string, policy?: { dailyGd: number; days: number }) {
   const wallet = createWalletClient({ chain: celo, transport: custom(provider) })
   const [account] = await wallet.requestAddresses()
+  if (expectedOwner && account.toLowerCase() !== expectedOwner.toLowerCase()) throw new Error('Switch to your verified GoodDollar wallet before approving spending.')
   await wallet.switchChain({ id: celo.id }).catch(() => wallet.addChain({ chain: celo }))
   const hash = await wallet.writeContract({
     account,
@@ -99,8 +110,55 @@ async function setSpendingLimit(provider: EIP1193Provider, spender: string, gd: 
     functionName: 'approve',
     args: [spender as `0x${string}`, parseEther(String(Math.max(0, Math.floor(gd))))],
   })
-  await createPublicClient({ chain: celo, transport: http() }).waitForTransactionReceipt({ hash, timeout: 90_000 })
+  const rpc = createPublicClient({ chain: celo, transport: http() })
+  const receipt = await rpc.waitForTransactionReceipt({ hash, timeout: 90_000 })
+  if (receipt.status !== 'success') throw new Error('The spending approval failed.')
+  if (policy) {
+    const configHash = await wallet.writeContract({ account, address: spender as `0x${string}`, abi: spendingPolicyAbi, functionName: 'configure', args: [parseEther(String(gd)), parseEther(String(Math.min(gd, policy.dailyGd))), BigInt(Math.floor(Date.now() / 1000) + policy.days * 86400)] })
+    const configured = await rpc.waitForTransactionReceipt({ hash: configHash, timeout: 90_000 })
+    if (configured.status !== 'success') throw new Error('The spending policy was not saved. Try again.')
+  }
   return { account, hash }
+}
+
+async function linkClaimContract(provider: EIP1193Provider, state: State, status: (s: string) => void): Promise<State> {
+  const prepared = await api<State>('/api/onboard', { action: 'prepare-claimer' })
+  if (!prepared.user.claimerAddress) throw new Error('Your claim contract is not ready yet.')
+  const wallet = createWalletClient({ chain: celo, transport: custom(provider) })
+  const rpc = createPublicClient({ chain: celo, transport: http() })
+  const [account] = await wallet.requestAddresses()
+  if (account.toLowerCase() !== state.user.rootAddress?.toLowerCase()) throw new Error('Switch to your verified GoodDollar wallet to upgrade.')
+  await wallet.switchChain({ id: celo.id }).catch(() => wallet.addChain({ chain: celo }))
+  if (prepared.config.treasury) {
+    const allowanceAbi = [{ type: 'function', name: 'allowance', stateMutability: 'view', inputs: [{ type: 'address', name: 'owner' }, { type: 'address', name: 'spender' }], outputs: [{ type: 'uint256' }] }] as const
+    const oldAllowance = await rpc.readContract({ address: GD_TOKEN, abi: allowanceAbi, functionName: 'allowance', args: [account, prepared.config.treasury as `0x${string}`] })
+    if (oldAllowance > 0n) {
+      status('Approve cancelling the old spending allowance…')
+      await setSpendingLimit(provider, prepared.config.treasury, 0, account)
+    }
+  }
+  const send = async (functionName: 'connectAccount' | 'disconnectAccount', address: string) => {
+    const hash = await wallet.writeContract({ account, address: IDENTITY, abi: CONNECT_ABI, functionName, args: [address as `0x${string}`] })
+    const receipt = await rpc.waitForTransactionReceipt({ hash, timeout: 90_000 })
+    if (receipt.status !== 'success') throw new Error('The wallet transaction failed. Try the upgrade again.')
+  }
+  // Unlink first: a stopped migration must never leave two claiming accounts enabled.
+  if (prepared.user.hasLegacyKey) {
+    const root = await rpc.readContract({ address: IDENTITY, abi: CONNECT_ABI, functionName: 'getWhitelistedRoot', args: [prepared.user.agentAddress as `0x${string}`] })
+    if (root.toLowerCase() === account.toLowerCase()) {
+      status('Approve removing the old claim wallet…')
+      await send('disconnectAccount', prepared.user.agentAddress)
+    }
+  }
+  const linked = await rpc.readContract({ address: IDENTITY, abi: CONNECT_ABI, functionName: 'getWhitelistedRoot', args: [prepared.user.claimerAddress as `0x${string}`] })
+  if (linked.toLowerCase() !== account.toLowerCase()) {
+    status('Approve linking your new claim contract…')
+    await send('connectAccount', prepared.user.claimerAddress)
+  }
+  status('Sign to finish linking this Jara account…')
+  const issuedAt = Date.now()
+  const signature = await wallet.signMessage({ account, message: walletClaimerMessage(prepared.user.id, account, prepared.user.claimerAddress, issuedAt) })
+  return api<State>('/api/onboard', { action: 'check', issuedAt, signature })
 }
 
 async function api<T>(path: string, body?: unknown, method?: 'DELETE'): Promise<T> {
@@ -446,6 +504,11 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
         setState(await api<State>('/api/onboard', { action: 'check' }))
         return
       }
+      if (state.config.keylessAvailable || state.user.claimerAddress) {
+        setState(await linkClaimContract(provider, state, flash))
+        flash('Daily claims now go directly to your own wallet.')
+        return
+      }
       const wallet = createWalletClient({ chain: celo, transport: custom(provider) })
       const [account] = await wallet.requestAddresses()
       if (account.toLowerCase() !== state.user.rootAddress?.toLowerCase()) {
@@ -465,7 +528,7 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
       if (state.config.treasury) {
         try {
           flash('Linked! Now set your spending limit…')
-          await setSpendingLimit(provider, state.config.treasury, state.config.limitGd)
+          await setSpendingLimit(provider, state.config.treasury, state.config.limitGd, state.user.rootAddress ?? undefined)
         } catch {
           flash('Skipped the spending limit. You can turn it on later in your profile.')
         }
@@ -606,11 +669,13 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
         {step === 2 && (
           <div className="grid gap-3">
             <p className="font-medium text-ink/75">
-              Approve two quick things in your wallet: link Jara to your GoodDollar account so it can claim your daily G$, and let it spend up to G$ {gdFmt(state.config.limitGd)} from your wallet for bills and AI. Existing G$ stays in your wallet until spent. Daily claims go into your Jara-managed wallet. You can withdraw claimed G$ and cancel the spending limit any time.
+              {state.config.keylessAvailable || state.user.claimerAddress
+                ? 'Link your personal claim contract to GoodDollar. It sends every daily claim straight to your own wallet. Jara pays the claim network fee and holds no key for this contract. Spending is set up separately in your profile.'
+                : `Link Jara to your GoodDollar account and optionally allow spending up to G$ ${gdFmt(state.config.limitGd)} for bills and AI. You can withdraw claimed G$ and cancel the spending limit any time.`}
             </p>
             <div className="rounded-xl border border-dashed border-ink/15 bg-[#f7f7f2] px-4 py-3">
               <p className="text-[11px] font-bold tracking-[0.12em] text-ink/50 uppercase">Your jar address</p>
-              <p className="font-mono text-sm font-bold break-all">{state.user.agentAddress}</p>
+              <p className="font-mono text-sm font-bold break-all">{state.user.claimerAddress ?? (state.user.hasLegacyKey ? state.user.agentAddress : 'Preparing your claim contract…')}</p>
             </div>
             {mock ? (
               <button
@@ -641,15 +706,19 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
             {!mock && (
               <>
                 <button
-                  onClick={() => act('check', async () => setState(await api<State>('/api/onboard', { action: 'check' })))}
+                  onClick={() => act('check', async () => {
+                    setState(state.config.keylessAvailable || state.user.claimerAddress
+                      ? await linkClaimContract(active?.provider ?? await getWalletProvider(), state, flash)
+                      : await api<State>('/api/onboard', { action: 'check' }))
+                  })}
                   disabled={!!busy}
                   className="app-button-secondary justify-center disabled:opacity-60"
                 >
                   {busy === 'check' ? 'Checking…' : 'I approved — check again'}
                 </button>
-                <a href="https://h3n3kp.csb.app/" target="_blank" rel="noreferrer" className="text-sm font-bold text-forest underline">
+                {!state.config.keylessAvailable && !state.user.claimerAddress && <a href="https://h3n3kp.csb.app/" target="_blank" rel="noreferrer" className="text-sm font-bold text-forest underline">
                   Wallet not working here? Use GoodDollar&apos;s connect tool and paste your jar address →
-                </a>
+                </a>}
               </>
             )}
           </div>
@@ -785,7 +854,7 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
                 <p className="mt-2 text-sm leading-relaxed text-ink/55">“What’s in my jars?” is a good place to start.</p>
                 <button onClick={() => navigate('chat')} className="mt-3 inline-flex min-h-9 items-center gap-2 text-sm font-bold text-forest">Ask Jara <Icon name="arrow" className="h-4 w-4" /></button>
               </div>
-              {state.user.hasPending && <button onClick={() => navigate('chat')} className="app-card p-5 text-left text-sm font-bold text-forest">You have a payment to review →</button>}
+              {state.user.hasPending && <button onClick={() => navigate('chat')} className="app-card p-5 text-left text-sm font-bold text-forest">You have a request to review →</button>}
             </aside>
           </div>
         </div>
@@ -918,8 +987,10 @@ function ProfileSheet({ state, setState, flash, onClose, onSignOut }: { state: S
         <div className="grid gap-5 p-5">
           {state.config.chainMode === 'mock' && <div className="rounded-2xl bg-white p-5"><p className="font-bold">Your demo wallet</p><p className="mt-2 text-sm leading-relaxed text-ink/60">This preview uses simulated G$. Explore your jars and try a budget move. No real wallet is connected.</p></div>}
           {state.config.chainMode !== 'mock' && <SpendingCard state={state} setState={setState} flash={flash} />}
+          {state.config.chainMode !== 'mock' && (state.config.keylessAvailable || state.user.claimerAddress) && <ClaimerCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && snap.mode === 'jar' && <GasCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && snap.mode === 'jar' && <WalletCard state={state} setState={setState} flash={flash} />}
+          {state.config.chainMode !== 'mock' && state.user.hasLegacyKey && <WalletKeyCard state={state} />}
           <div className="app-card p-5">
             <p className="text-sm font-semibold">Sign out</p>
             <p className="mt-1 text-sm leading-relaxed text-ink/55">
@@ -969,22 +1040,114 @@ function WalletActionButton({
   )
 }
 
+/** The Jara wallet is the person's own: they can see its key after signing with their GoodDollar wallet. */
+function WalletKeyCard({ state }: { state: State }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [privateKey, setPrivateKey] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const root = state.user.rootAddress
+  if (!root || !state.user.connected) return null
+
+  const reveal = async (provider: EIP1193Provider) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const wallet = createWalletClient({ chain: celo, transport: custom(provider) })
+      const [account] = await wallet.requestAddresses()
+      if (account.toLowerCase() !== root.toLowerCase()) {
+        setError(`That was ${short(account)}. Only your GoodDollar wallet ${short(root)} can open this; switch to it and try again.`)
+        return
+      }
+      const issuedAt = Date.now()
+      const signature = await wallet.signMessage({ account, message: walletKeyExportMessage(getAddress(root), state.user.agentAddress, issuedAt) })
+      const r = await api<{ privateKey: string }>('/api/wallet/key', { issuedAt, signature })
+      setPrivateKey(r.privateKey)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : walletErrorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="app-card p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <h4 className="text-base font-bold tracking-tight">Your Jara wallet key</h4>
+        <p className="font-mono text-xs font-bold text-ink/50">{short(state.user.agentAddress)}</p>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-ink/60">
+        {state.user.claimerActive ? 'This is your old wallet, which no longer claims for you. Keep a copy of its key to recover any remaining G$ or CELO. Do not deposit new funds here.' : 'Jara claims your daily G$ with this wallet. It is yours: you can view its private key and keep your own copy.'} Jara asks your GoodDollar wallet for a free signature first, so only you can see it.
+      </p>
+      {privateKey ? (
+        <div className="mt-4 rounded-xl border border-mandarin/40 bg-[#fff8ef] px-4 py-3">
+          <p className="text-[11px] font-bold tracking-[0.12em] text-ink/60 uppercase">Private key · never share it</p>
+          <p className="mt-1 font-mono text-xs font-bold break-all select-all">{privateKey}</p>
+          <p className="mt-2 text-xs leading-relaxed font-semibold text-ink/60">Anyone with this key can move the G$ in your Jara wallet. Jara will never ask you for it.</p>
+          <div className="mt-3 flex gap-4">
+            <button
+              onClick={() => navigator.clipboard.writeText(privateKey).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })}
+              className="text-sm font-bold text-forest underline"
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button onClick={() => { setPrivateKey(null); setCopied(false) }} className="text-sm font-bold text-ink/60 underline">
+              Hide
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 grid gap-2">
+          <WalletActionButton disabled={busy} label={busy ? 'Sign in your wallet…' : 'Show my private key'} onProvider={reveal} onError={(err) => setError(walletErrorMessage(err))} />
+        </div>
+      )}
+      {error && <p role="alert" className="mt-3 text-sm font-semibold text-mandarin">{error}</p>}
+    </section>
+  )
+}
+
 /** Spending from their own wallet: the limit, claimed G$, and switching it on or off. */
+function ClaimerCard({ state, setState, flash }: { state: State; setState: (s: State) => void; flash: (t: string) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  return <section className="app-card p-5">
+    <h4 className="text-base font-bold">{state.user.claimerActive ? 'Claims go to your wallet' : 'Upgrade your daily claims'}</h4>
+    <p className="mt-2 text-sm text-ink/70">{state.user.claimerActive
+      ? 'Your claim contract can only send your daily G$ to your own wallet. It has no private key. Jara pays the claim network fee.'
+      : 'Approve cancelling the old spending allowance, unlinking the old Jara wallet and linking your claim contract. Future claims go straight to your wallet. Old funds and keys remain available. Set a new spending limit after upgrading.'}</p>
+    {state.user.claimerAddress && <p className="mt-2 break-all font-mono text-xs">{state.user.claimerAddress}</p>}
+    {!state.user.claimerActive && <div className="mt-3"><WalletActionButton disabled={busy} label={busy ? 'Finish in your wallet…' : 'Upgrade daily claims'} onProvider={async (provider) => {
+      setBusy(true); setError(null)
+      try { setState(await linkClaimContract(provider, state, flash)); flash('Daily claims now go directly to your wallet.') }
+      catch (err) { setError(walletErrorMessage(err)) }
+      finally { setBusy(false) }
+    }} onError={(err) => setError(walletErrorMessage(err))} /></div>}
+    {state.user.claimerActive && state.user.hasLegacyKey && state.snapshot.claimedGd > 0 && <button className="mt-3 text-sm font-bold text-forest underline" disabled={busy} onClick={async () => {
+      setBusy(true); setError(null)
+      try { setState(await api<State>('/api/wallet', { action: 'withdraw' })); flash('Old claimed funds sent to your wallet.') }
+      catch (err) { setError(walletErrorMessage(err)) }
+      finally { setBusy(false) }
+    }}>Withdraw old wallet funds (G$ {gdFmt(state.snapshot.claimedGd)})</button>}
+    {error && <p role="alert" className="mt-3 text-sm text-mandarin">{error} You can retry safely.</p>}
+  </section>
+}
+
 function SpendingCard({ state, setState, flash }: { state: State; setState: (s: State) => void; flash: (t: string) => void }) {
   const snap = state.snapshot
-  const treasury = state.config.treasury
+  const treasury = state.user.claimerActive ? state.config.spendingContract : state.config.treasury
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
 
-  if (!treasury || !state.user.rootAddress) return null
-  const on = snap.mode === 'wallet'
+  if (!state.user.rootAddress) return null
+  if (!treasury) return state.user.claimerActive ? <section className="app-card p-5"><h4 className="font-bold">Your GoodDollar wallet</h4><p className="mt-2 text-sm">Daily claims go to your wallet. Bill and AI spending will be available once protected spending is configured.</p></section> : null
+  const on = snap.limitLeftGd > 0
 
   const limit = (gd: number, done: string) => async (provider: EIP1193Provider) => {
     setBusy('limit')
     setError(null)
     try {
-      const { account } = await setSpendingLimit(provider, treasury, gd)
+      const { account } = await setSpendingLimit(provider, treasury, gd, state.user.rootAddress!, state.user.claimerActive ? { dailyGd: state.config.dailyLimitGd, days: state.config.policyDays } : undefined)
       if (account.toLowerCase() !== state.user.rootAddress?.toLowerCase()) {
         setError(`That was ${short(account)}. Jara spends from your GoodDollar wallet ${short(state.user.rootAddress ?? '')}; switch to it and try again.`)
         return
@@ -1021,6 +1184,8 @@ function SpendingCard({ state, setState, flash }: { state: State; setState: (s: 
         {snap.walletGd === null ? 'G$ —' : `G$ ${gdFmt(snap.walletGd)}`}
         {snap.walletGd !== null && <span className="ml-2 text-base font-bold text-ink/50">{formatNgn(Math.floor(snap.walletGd * snap.ngnPerGd))}</span>}
       </p>
+      {state.user.claimerActive && <p className="mt-2 text-sm text-ink/70">Spending permission lasts {state.config.policyDays} days, with a maximum of G$ {gdFmt(state.config.dailyLimitGd)} per UTC day and the total you approve. Cancelling it keeps daily claims running. The daily cap limits purchases, including automatic bills.</p>}
+      {state.user.claimerActive && snap.feesOwedGd > 0 && <p className="mt-2 text-sm text-ink/70">G$ {gdFmt(snap.feesOwedGd)} remains reserved for old network fees. It is not added to new purchases.</p>}
 
       {on ? (
         <>
@@ -1035,16 +1200,16 @@ function SpendingCard({ state, setState, flash }: { state: State; setState: (s: 
               onError={(err) => setError(walletErrorMessage(err))}
             />
           </div>
-          <div className="mt-4 rounded-xl border border-ink/8 bg-[#f7f7f2] px-4 py-3">
+          {!state.user.claimerActive && <div className="mt-4 rounded-xl border border-ink/8 bg-[#f7f7f2] px-4 py-3">
             <p className="text-[11px] font-bold tracking-[0.12em] text-ink/50 uppercase">G$ Jara claimed for you</p>
             <p className="text-xl font-semibold tracking-tight tabular-nums">G$ {gdFmt(snap.claimedGd)}</p>
-            <p className="text-sm font-semibold text-ink/60">Held in your Jara-managed wallet until spent or withdrawn. Each purchase uses one wallet only.{snap.feesOwedGd > 0 ? ` Network fees so far: G$ ${gdFmt(snap.feesOwedGd)}.` : ''}</p>
+            <p className="text-sm font-semibold text-ink/60">Waiting in your Jara-managed wallet. Jara sends it on to your own wallet after each claim, or send it now. Each purchase uses one wallet only.{snap.feesOwedGd > 0 ? ` Network fees so far: G$ ${gdFmt(snap.feesOwedGd)}.` : ''}</p>
             {snap.claimedGd >= 1 && (
               <button onClick={withdraw} disabled={!!busy} className="mt-2 text-sm font-bold text-forest underline disabled:opacity-60">
                 {busy === 'withdraw' ? 'Sending…' : 'Send it to my wallet'}
               </button>
             )}
-          </div>
+          </div>}
           <div className="mt-3">
             <WalletActionButtonLink
               disabled={!!busy}
@@ -1757,7 +1922,7 @@ function RewardsCard({ state, flash }: { state: State; flash: (t: string) => voi
       </ul>
       <button
         onClick={() => {
-          navigator.clipboard?.writeText(user.inviteLink).then(() => flash('Invite link copied — G$ 1,000 per friend who joins'), () => flash(user.inviteLink))
+          navigator.clipboard?.writeText(user.inviteLink).then(() => flash('Invite link copied — G$ 1,000 for each new verified friend who joins'), () => flash(user.inviteLink))
         }}
         className="mt-4 w-full rounded-2xl bg-cream py-3 text-sm font-bold ring-1 ring-ink/10 hover:ring-ink/30"
       >
@@ -2251,7 +2416,7 @@ const CHIPS = ['Help me brainstorm a project', '₦200 airtime for me', 'My rewa
 function Chat({ state, setState, flash }: { state: State; setState: (s: State) => void; flash: (t: string) => void }) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
-  const [confirm, setConfirm] = useState<{ id: string; summary: string; gd: number } | null>(state.user.hasPending ? { id: state.user.pendingId ?? '', summary: 'Your last request', gd: 0 } : null)
+  const [confirm, setConfirm] = useState<ConfirmCard | null>(state.user.pendingConfirm)
   const [optimistic, setOptimistic] = useState<string | null>(null)
   const [received, setReceived] = useState<Msg[]>([])
   const sendingRef = useRef(false)
@@ -2270,7 +2435,7 @@ function Chat({ state, setState, flash }: { state: State; setState: (s: State) =
     if (body.text) setOptimistic(body.text)
     if (body.confirm !== undefined) setConfirm(null)
     try {
-      const r = await api<{ reply: { text: string; confirm?: { id: string; summary: string; gd: number } }; messages: Msg[] }>('/api/chat', { ...body, response: 'compact', ...(body.confirm !== undefined ? { actionId: confirm?.id } : {}) })
+      const r = await api<{ reply: { text: string; confirm?: ConfirmCard }; messages: Msg[] }>('/api/chat', { ...body, response: 'compact', ...(body.confirm !== undefined ? { actionId: confirm?.id } : {}) })
       setReceived(r.messages)
       setConfirm(r.reply.confirm ?? null)
       void api<State | { user: null }>('/api/session').then((s) => { if (s.user) setState(s as State) }).catch(() => {})
@@ -2320,17 +2485,18 @@ function Chat({ state, setState, flash }: { state: State; setState: (s: State) =
         )}
         {confirm && !sending && (
           <div className="animate-pop ml-0 max-w-[88%] overflow-hidden rounded-2xl border border-ink/10 bg-white shadow-sm">
-            <div className="bg-crest px-4 py-2 text-xs font-bold tracking-widest uppercase">Ready to pay</div>
+            <div className="bg-crest px-4 py-2 text-xs font-bold tracking-widest uppercase">{confirm.title ?? 'Ready to pay'}</div>
             <div className="px-4 py-3">
               <p className="font-bold leading-snug">{confirm.summary}</p>
               {confirm.gd > 0 && <p className="mt-0.5 text-sm font-semibold text-ink/55">G$ {gdFmt(confirm.gd)} from your jars</p>}
+              {confirm.action && <p className="mt-1 text-xs font-semibold text-ink/45">Nothing changes and nothing is charged unless you approve.</p>}
             </div>
             <div className="grid grid-cols-2 border-t border-ink/10">
               <button onClick={() => send({ confirm: false })} className="py-3 text-sm font-semibold text-ink/60 hover:bg-[#f4f5ef]">
                 Cancel
               </button>
               <button onClick={() => send({ confirm: true })} className="border-l border-ink/10 bg-forest py-3 text-sm font-semibold text-cream hover:bg-forest-soft">
-                Pay it
+                {confirm.action ?? 'Pay it'}
               </button>
             </div>
           </div>

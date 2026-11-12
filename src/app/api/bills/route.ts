@@ -3,6 +3,7 @@ import { apiFailure } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 import { formatEther } from 'viem'
 import { resolvePending } from '@/lib/agent'
+import { cancelPendingApprovals } from '@/lib/agent/approvals'
 import { describeAction, prepareBill } from '@/lib/bills'
 import { isNetwork } from '@/lib/catalog'
 import { serverConfig } from '@/lib/env'
@@ -79,6 +80,8 @@ async function post(req: Request) {
       planCode: body.planCode || undefined,
     })
     if ('error' in prepared) return bad(prepared.error)
+    // One thing waits for a yes at a time: this bill replaces any assistant request.
+    await cancelPendingApprovals(user.id)
     await updateUser(user.id, { pending: prepared.action })
     const gd = Math.ceil(Number(formatEther(BigInt(prepared.action.quoteWei!))))
     return NextResponse.json({ id: prepared.action.id, summary: describeAction(prepared.action), amountNgn: prepared.action.amountNgn, gd })

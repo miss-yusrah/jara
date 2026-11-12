@@ -17,6 +17,7 @@ export async function POST(req: Request) {
   if (serverConfig().chain.mode === 'mock') return bad('Use the demo deposit in mock mode', 404)
   const user = await requireUser()
   if (user instanceof NextResponse) return user
+  if (user.claimerActive || user.agentKeyEnc === 'keyless') return bad('Keep G$ in your own wallet and set a spending limit in your profile. This account no longer accepts Jara-wallet deposits.')
   const { hash } = (await req.json().catch(() => ({}))) as { hash?: string }
 
   await withUserLock(user.id, async () => {

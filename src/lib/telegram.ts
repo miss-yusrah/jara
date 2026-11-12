@@ -5,6 +5,8 @@ import { serverConfig } from './env'
 type Keyboard = { text: string; callback_data?: string; url?: string }[][]
 
 async function call(method: string, body: Record<string, unknown>) {
+  // Scheduled notices must not leak account data to previously linked groups.
+  if ('chat_id' in body && !/^[1-9][0-9]*$/.test(String(body.chat_id))) return null
   const token = serverConfig().telegram.botToken
   if (!token) return null
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -49,9 +51,9 @@ export function botLink(linkCode?: string) {
   return `https://t.me/${name}${linkCode ? `?start=${linkCode}` : ''}`
 }
 
-export const CONFIRM_KEYBOARD = (id: string): Keyboard => [
+export const CONFIRM_KEYBOARD = (id: string, action = 'Pay it'): Keyboard => [
   [
-    { text: '✅ Pay it', callback_data: `confirm:${id}` },
+    { text: `✅ ${action}`, callback_data: `confirm:${id}` },
     { text: '✖ Cancel', callback_data: `cancel:${id}` },
   ],
 ]

@@ -133,14 +133,14 @@ function demoAnswer(tool: AiToolId, input: string): string {
  * Run an AI helper and pay for it in G$ from the user's jars (AI jar first).
  * Charges only after a real answer comes back.
  */
-export async function runAiTool(user: User, tool: AiToolId, input: string, requestId: string): Promise<{ ok: boolean; output: string; costGd: number; demo: boolean; message?: string }> {
+export async function runAiTool(user: User, tool: AiToolId, input: string, requestId: string): Promise<{ ok: boolean; output: string; costGd: number; demo: boolean; message?: string; /** The charge is not confirmed yet: retry the same request ID. */ pending?: boolean }> {
   if (tool === 'exam') {
     try {
       const { createExam } = await import('./exams')
       const result = await createExam(user, input, requestId)
       return { ok: true, output: `Your 20-question practice session is ready. Choose your answers one at a time, then see your score and explanations.\n\nOpen exam prep: ${serverConfig().appUrl}/app/exam?run=${result.id}`, costGd: result.costGd, demo: false }
     } catch (err) {
-      return { ok: false, output: '', costGd: 0, demo: false, message: err instanceof Error ? err.message : 'Could not prepare your practice.' }
+      return { ok: false, output: '', costGd: 0, demo: false, message: err instanceof Error ? err.message : 'Could not prepare your practice.', pending: err instanceof Error && 'status' in err && err.status === 409 }
     }
   }
   const spec = AI_TOOLS[tool]
@@ -159,7 +159,7 @@ export async function runAiTool(user: User, tool: AiToolId, input: string, reque
   })
   if (result.ok) return { ...result, demo: false }
   if (result.reason === 'offline' && serverConfig().chain.mode === 'mock') return { ok: true, output: demoAnswer(tool, text), costGd: 0, demo: true }
-  return { ok: false, output: '', costGd: 0, demo: false, message: result.reason === 'failed' ? 'The payment failed without transferring G$. Start a new request to try again.' : result.reason === 'funds' ? 'Not enough G$ in your AI jar. Move money into it first.' : result.reason === 'payment' ? 'Payment is not confirmed. Retry this same request to check it.' : 'The AI helper is unavailable. No payment was started.' }
+  return { ok: false, output: '', costGd: 0, demo: false, pending: result.reason === 'payment', message: result.reason === 'failed' ? 'The payment failed without transferring G$. Start a new request to try again.' : result.reason === 'funds' ? 'Not enough G$ in your AI jar. Move money into it first.' : result.reason === 'payment' ? 'Payment is not confirmed. Retry this same request to check it.' : 'The AI helper is unavailable. No payment was started.' }
 }
 
 interface PaidJobData {

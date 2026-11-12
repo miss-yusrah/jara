@@ -8,6 +8,9 @@ import {
   parseAbi,
   parseEther,
   zeroAddress,
+  keccak256,
+  toBytes,
+  isAddress,
   type Address,
   type Hash,
 } from 'viem'
@@ -16,6 +19,7 @@ import { celo } from 'viem/chains'
 import { atomic, run } from './db'
 import { durableTransaction, hasSubmittedTransaction } from './chain-outbox'
 import { serverConfig } from './env'
+import { spendingPolicyAbi } from './spending-policy'
 
 // GoodDollar production contracts on Celo, as listed in @goodsdks/citizen-sdk constants.
 export const GD = {
@@ -126,6 +130,11 @@ export async function verificationExpiresAt(root: Address): Promise<number | nul
   ])
   if (last === 0n) return null
   return Number(last + periodDays * 86_400n) * 1000
+}
+
+/** True if `signature` over `message` was made by `address`. Also handles smart-contract wallets (ERC-1271). */
+export async function verifyWalletSignature(address: Address, message: string, signature: `0x${string}`): Promise<boolean> {
+  return publicClient().verifyMessage({ address, message, signature }).catch(() => false)
 }
 
 // ---------- writes ----------
@@ -267,15 +276,40 @@ export async function transferFromAgent(
 
 
 /** How much G$ the treasury may still pull from `owner`'s own wallet (their spending limit). */
-export async function gdAllowance(owner: Address, blockNumber?: bigint): Promise<bigint> {
+export async function gdAllowance(owner: Address, blockNumber?: bigint, policy = false): Promise<bigint> {
   if (isMock()) return 0n
+  if (policy) {
+    const address = serverConfig().chain.spendingContract
+    // Claims continue without a payment policy; spending is disabled, never falls
+    // back to a direct treasury allowance when configuration is absent.
+    if (!address) return 0n
+    await verifySpendingContract()
+    return publicClient().readContract({ address: address as Address, abi: spendingPolicyAbi, functionName: 'available', args: [owner], blockNumber })
+  }
   return publicClient().readContract({ address: GD.token, abi: erc20Abi, functionName: 'allowance', args: [owner, treasuryAddress()], blockNumber })
 }
 
 /** Pull G$ from the person's own wallet into the treasury, within the limit they approved. */
-export async function pullGdFromWallet(from: Address, amount: bigint, operationId: string): Promise<{ hash: Hash; feeWei: bigint }> {
+export async function pullGdFromWallet(from: Address, amount: bigint, operationId: string, policy = false): Promise<{ hash: Hash; feeWei: bigint }> {
   if (isMock()) throw new Error('Spending from your own wallet is not available in demo mode')
+  if (policy) {
+    const address = await verifySpendingContract()
+    return durableTransaction(operationId, treasuryKey(), { to: address, data: encodeFunctionData({ abi: spendingPolicyAbi, functionName: 'charge', args: [from, amount, keccak256(toBytes(operationId))] }), transfer: { token: GD.token, from, to: treasuryAddress(), amount: String(amount) } })
+  }
   return durableTransaction(operationId, treasuryKey(), { to: GD.token, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transferFrom', args: [from, treasuryAddress(), amount] }), transfer: { token: GD.token, from, to: treasuryAddress(), amount: String(amount) } })
+}
+
+export async function verifySpendingContract(): Promise<Address> {
+  const address = serverConfig().chain.spendingContract
+  if (!isAddress(address) || address === zeroAddress) throw new Error('Protected spending is not configured. Your claims still go to your wallet.')
+  const pc = publicClient()
+  const [token, operator, recipient] = await Promise.all([
+    pc.readContract({ address, abi: spendingPolicyAbi, functionName: 'gd' }),
+    pc.readContract({ address, abi: spendingPolicyAbi, functionName: 'operator' }),
+    pc.readContract({ address, abi: spendingPolicyAbi, functionName: 'recipient' }),
+  ])
+  if (token.toLowerCase() !== GD.token.toLowerCase() || operator.toLowerCase() !== treasuryAddress().toLowerCase() || recipient.toLowerCase() !== treasuryAddress().toLowerCase()) throw new Error('Spending contract configuration does not match this deployment.')
+  return address
 }
 
 /** Rewards and refunds must reuse their durable operation ID on every retry. */

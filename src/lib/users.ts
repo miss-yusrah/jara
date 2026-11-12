@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import type { Row } from '@libsql/client'
 import { run } from './db'
 import { createAgentWallet } from './wallets'
+import { serverConfig } from './env'
 
 export const JAR_KINDS = ['light', 'data', 'airtime', 'ai'] as const
 export type JarKind = (typeof JAR_KINDS)[number]
@@ -50,6 +51,9 @@ export interface User {
   rootAddress: `0x${string}` | null
   agentAddress: `0x${string}`
   agentKeyEnc: string
+  claimerAddress: `0x${string}` | null
+  claimerFactory: `0x${string}` | null
+  claimerActive: boolean
   connected: boolean
   streak: number
   lastClaimDay: string | null
@@ -72,6 +76,9 @@ function toUser(r: Row): User {
     rootAddress: (r.root_address as `0x${string}`) ?? null,
     agentAddress: r.agent_address as `0x${string}`,
     agentKeyEnc: r.agent_key_enc as string,
+    claimerAddress: (r.claimer_address as `0x${string}`) ?? null,
+    claimerFactory: (r.claimer_factory as `0x${string}`) ?? null,
+    claimerActive: Number(r.claimer_active) === 1,
     connected: Number(r.connected) === 1,
     streak: Number(r.streak),
     lastClaimDay: (r.last_claim_day as string) ?? null,
@@ -91,7 +98,11 @@ async function one(sql: string, args: (string | number | null)[]): Promise<User 
 
 export async function createUser(input: { name?: string; tgChatId?: string; referredBy?: string } = {}): Promise<User> {
   const id = `u_${randomBytes(8).toString('hex')}`
-  const wallet = createAgentWallet()
+  // Placeholder preserves the legacy NOT NULL/UNIQUE schema. It is never shown as
+  // a deposit address or used on-chain; there is deliberately no corresponding key.
+  const wallet = serverConfig().chain.mode === 'celo' && serverConfig().chain.claimerFactory
+    ? { address: `0x${randomBytes(20).toString('hex')}`, encryptedKey: 'keyless' }
+    : await createAgentWallet()
   await run(
     `INSERT INTO users (id, name, session_token, tg_chat_id, link_code, agent_address, agent_key_enc, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -172,6 +183,7 @@ export async function updateUser(
 
 /** Move a Telegram chat onto an existing (web-created) user. */
 export async function linkTelegram(userId: string, chatId: string) {
+  if (!/^[1-9][0-9]*$/.test(chatId)) throw new Error('Link Telegram from your private chat with Jara.')
   await run('UPDATE users SET tg_chat_id = NULL WHERE tg_chat_id = ? AND id != ?', [chatId, userId])
   await updateUser(userId, { tgChatId: chatId })
 }

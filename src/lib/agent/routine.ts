@@ -2,9 +2,10 @@ import { serverConfig } from '../env'
 import { formatEther } from 'viem'
 import { checkAutoPay } from '../auto-pay'
 import { formatNgn } from '../catalog'
-import { runDaily } from '../daily'
+import { lagosDay, runDaily } from '../daily'
+import { forwardToOwner } from '../spend'
 import { AI_TOOLS } from '../ai-tools'
-import { getJars, jarDueAt, moveToJar, snapshot, withUserLock } from '../jars'
+import { getJars, jarDueAt, moveToJar, snapshot, syncJars, withUserLock } from '../jars'
 import { collectRewards } from '../rewards'
 import { runAgentJobs } from './jobs'
 import { JAR_INFO, isBillKind, getUserById, listConnectedUsers, logActivity, updateUser, type User } from '../users'
@@ -57,7 +58,10 @@ export async function runAgent(
 
     // REWARDS
     user = (await getUserById(userId))!
-    for (const r of await collectRewards(user)) steps.push({ lane: 'rewards', text: `Found a reward: ${r.title} (+G$ ${r.amountGd.toLocaleString()})` })
+    const found = await collectRewards(user)
+    for (const r of found) steps.push({ lane: 'rewards', text: `Found a reward: ${r.title} (+G$ ${r.amountGd.toLocaleString()})` })
+    // Rewards are paid to the Jara wallet; pass them on to the person's own wallet too.
+    if (found.length && (await forwardToOwner(user, `${lagosDay()}:rewards`))) await syncJars(user)
 
     // Due-soon top-ups and rewards can also fill a jar.
     for (const payment of await checkAutoPay(user)) {

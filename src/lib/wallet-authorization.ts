@@ -2,6 +2,7 @@ import { whitelistedRoot } from './chain'
 import { serverConfig } from './env'
 import { getUserById, type User } from './users'
 import { atomic, run } from './db'
+import { claimAddress } from './claimers'
 
 /** The Jara account this GoodDollar wallet already belongs to, if any (other than `exceptUserId`). */
 export async function accountForWallet(rootAddress: string, exceptUserId?: string): Promise<string | null> {
@@ -35,7 +36,7 @@ export async function authorizedUser(input: User): Promise<User> {
   const user = await getUserById(input.id)
   if (!user?.connected || !user.rootAddress) throw new Error('Connect your GoodDollar account first.')
   if (serverConfig().chain.mode !== 'mock') {
-    const root = await whitelistedRoot(user.agentAddress)
+    const root = await whitelistedRoot(claimAddress(user))
     if (!root || root.toLowerCase() !== user.rootAddress.toLowerCase()) {
       throw new Error('Your wallet link has changed. Reconnect your GoodDollar account before spending.')
     }

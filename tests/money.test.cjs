@@ -386,14 +386,15 @@ test('a bill bigger than its jar uses unbudgeted G$, never another jar', async (
   assert.equal(await balance(user, 'light'), amount(200))
 })
 
-test('network fees Jara fronted are repaid once, inside the next payment', async () => {
+test('old network fees remain reserved and are not added to a newly approved payment', async () => {
   const user = await fixture({ ai: 500 }, 1000)
   await run('UPDATE users SET gas_owed_wei = ? WHERE id = ?', [String(amount(10)), user.id])
   const request = { id: `${user.id}:fee`, jar: 'ai' }
   await spend.spendGd(user, amount(100), request)
   await spend.spendGd(user, amount(100), request) // retry: no second charge
-  assert.equal(await chain.gdBalance(user.agentAddress), amount(890))
-  assert.equal(await spend.getGasOwed(user.id), 0n)
+  assert.equal(await chain.gdBalance(user.agentAddress), amount(900))
+  assert.equal(await spend.getGasOwed(user.id), amount(10))
+  assert.equal(await spend.spendableWei(user), amount(890))
   assert.equal(await balance(user, 'ai'), amount(400))
 })
 

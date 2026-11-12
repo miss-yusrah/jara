@@ -19,7 +19,7 @@ import { refundPayment, spendGd } from './spend'
 import { moneyRequest } from './money-request'
 import { atomic } from './db'
 import { run } from './db'
-import { serverConfig, testNumbersAllowed } from './env'
+import { billPurchaseProblem, serverConfig, testNumbersAllowed } from './env'
 import { getJars, syncJars, withUserLock } from './jars'
 import { gdForNgn } from './price'
 import { getProviderByName, getTopupProvider, type TopupResult } from './providers'
@@ -131,6 +131,12 @@ export async function payBill(user: User, action: PendingAction): Promise<BillRe
     if (request.result) return request.result as BillResult
     if (!request.data) {
       const provider = getTopupProvider()
+      // Real and simulated money never mix. Refuse before any G$ is reserved.
+      const problem = billPurchaseProblem(provider.name)
+      if (problem) {
+        console.error('[bills] purchase refused:', problem)
+        return request.finish({ ok: false, message: 'Bill payments are not available right now. Nothing was charged.' })
+      }
       request.data = { action, amount: action.quoteWei ?? String(await gdForNgn(action.amountNgn)), provider: provider.name, reference: provider.createReference(), phase: 'charge' }
       await request.save(request.data)
     }
@@ -161,6 +167,13 @@ export async function payBill(user: User, action: PendingAction): Promise<BillRe
     }
     txHash ??= String((await run('SELECT tx_hash FROM payments WHERE id = ?', [request.id])).rows[0]?.tx_hash ?? '')
     const provider = getProviderByName(data.provider)
+    if (data.phase === 'ready' && billPurchaseProblem(data.provider)) {
+      // The G$ is already charged but this provider must not be used (the mode changed
+      // while the purchase was in flight). Never deliver across modes: refund instead.
+      console.error('[bills] in-flight purchase refunded instead of sent:', billPurchaseProblem(data.provider))
+      data.phase = 'refund'
+      await request.save(data)
+    }
     if (data.phase === 'ready') {
       // Mark BEFORE sending. On a timeout/restart, query this reference; never
       // blindly send a second purchase, even if the provider says not found.

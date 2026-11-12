@@ -2,7 +2,7 @@ import { scheduleAutoPay } from '@/lib/auto-pay-after'
 import { NextResponse } from 'next/server'
 import { parseEther } from 'viem'
 import { mockDeposit } from '@/lib/chain'
-import { serverConfig } from '@/lib/env'
+import { demoFundsAllowed, serverConfig } from '@/lib/env'
 import { syncJars } from '@/lib/jars'
 import { clientIp, rateLimit } from '@/lib/ratelimit'
 import { requireUser } from '@/lib/session'
@@ -15,6 +15,8 @@ export const dynamic = 'force-dynamic'
 // Demo mode only: add G$ or fast-forward a day so the "week in Jara" can be shown live.
 export async function POST(req: Request) {
   if (serverConfig().chain.mode !== 'mock') return bad('Demo tools are off', 404)
+  // Simulated G$ is only handed out when nothing real can be bought with it.
+  if (!demoFundsAllowed()) return bad('Demo tools are off while a live bill provider is configured.', 409)
   const user = await requireUser()
   if (user instanceof NextResponse) return user
   if (!rateLimit(`demo:${user.id}`, 20, 60 * 60_000) || !rateLimit(`demo-ip:${clientIp(req)}`, 60, 60 * 60_000)) {

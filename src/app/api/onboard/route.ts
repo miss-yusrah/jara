@@ -8,6 +8,7 @@ import { getUserById, logActivity, updateUser } from '@/lib/users'
 import { bad, userState } from '../_shared'
 import { withUserLock } from '@/lib/jars'
 import { WALLET_LINKED_MESSAGE, accountForWallet, bindWallet } from '@/lib/wallet-authorization'
+import { activateClaimer, prepareClaimer } from '@/lib/claimers'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,11 +18,16 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: Request) {
   const user = await requireUser()
   if (user instanceof NextResponse) return user
-  const body = (await req.json().catch(() => ({}))) as { action?: string; address?: string }
+  const body = (await req.json().catch(() => ({}))) as { action?: string; address?: string; issuedAt?: number; signature?: string }
   const mock = serverConfig().chain.mode === 'mock'
 
   return withUserLock(user.id, async () => {
-    const fresh = (await getUserById(user.id))!
+    let fresh = (await getUserById(user.id))!
+
+    if (body.action === 'prepare-claimer') {
+      try { return NextResponse.json(await userState(await prepareClaimer(fresh))) }
+      catch (err) { return bad(err instanceof Error ? err.message : 'Could not prepare the claim contract.') }
+    }
 
     if (body.action === 'root') {
       if (fresh.connected) return bad('Your connected wallet cannot be changed here. Disconnect the existing identity link before setting up another account.', 409)
@@ -44,11 +50,22 @@ export async function POST(req: Request) {
       } else {
         await updateUser(user.id, { rootAddress: address })
       }
+      if (!mock && serverConfig().chain.claimerFactory) {
+        try { await prepareClaimer((await getUserById(user.id))!) }
+        catch (err) { return bad(err instanceof Error ? err.message : 'Could not prepare the claim contract.') }
+      }
       return NextResponse.json(await userState((await getUserById(user.id))!))
     }
 
     if (body.action === 'check') {
       if (!fresh.rootAddress) return bad('Add your GoodDollar address first.')
+      if (!mock && (fresh.claimerAddress || serverConfig().chain.claimerFactory || fresh.agentKeyEnc === 'keyless')) {
+        try {
+          fresh = await activateClaimer(fresh, body)
+          await runDaily(fresh).catch((err) => console.warn('[onboard] first keyless claim deferred', err instanceof Error ? err.message : 'error'))
+          return NextResponse.json(await userState(fresh))
+        } catch (err) { return bad(err instanceof Error ? err.message : 'Could not activate keyless claims.') }
+      }
       let ok = false
       if (mock) ok = true
       else {

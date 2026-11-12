@@ -170,17 +170,19 @@ test('a model-proposed bill returns its confirmation without a second inference 
 
 test('if AI times out after a tool changed a jar, return that result without running a fallback action', async () => {
   const user = await fixture()
+  await run("UPDATE jars SET auto_pay = 1 WHERE user_id = ? AND kind = 'airtime'", [user.id])
   const originals = { chat: llm.chat, reachable: llm.llmReachable }
   let calls = 0
   llm.llmReachable = async () => true
   llm.chat = async () => {
     if (++calls > 1) throw new Error('Model timeout')
-    return { role: 'assistant', content: null, tool_calls: [{ id: 'set-1', type: 'function', function: { name: 'set_jar', arguments: '{"jar":"airtime","target_ngn":500}' } }] }
+    // Switching auto-pay off only reduces spending, so it is the one jar change that applies without approval.
+    return { role: 'assistant', content: null, tool_calls: [{ id: 'set-1', type: 'function', function: { name: 'set_jar', arguments: '{"jar":"airtime","auto_pay":false}' } }] }
   }
   try {
-    const reply = await agent.handleMessage(user.id, 'Set my airtime savings target to 500 naira', 'post-tool-timeout')
+    const reply = await agent.handleMessage(user.id, 'Stop paying my airtime automatically', 'post-tool-timeout')
     assert.equal(reply.text, 'updated airtime jar')
-    assert.equal((await jars.getJars(user.id)).find((j) => j.kind === 'airtime').targetNgn, 500)
+    assert.equal((await jars.getJars(user.id)).find((j) => j.kind === 'airtime').autoPay, false)
     assert.equal((await users.getUserById(user.id)).pending, null)
     assert.equal(calls, 2)
   } finally { llm.chat = originals.chat; llm.llmReachable = originals.reachable }

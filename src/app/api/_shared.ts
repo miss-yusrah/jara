@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import { listMessages } from '@/lib/agent'
+import { listMessages, pendingConfirm } from '@/lib/agent'
 import { llmReachable } from '@/lib/agent/llm'
 import { serverConfig } from '@/lib/env'
 import { treasuryAddress } from '@/lib/chain'
+import { POLICY_DAILY_GD, POLICY_DAYS } from '@/lib/spending-policy'
 import { DEFAULT_LIMIT_GD } from '@/lib/spend'
 import { snapshot } from '@/lib/jars'
 import { botLink } from '@/lib/telegram'
@@ -13,7 +14,7 @@ import { listActivity, type User, ensureRefCode } from '@/lib/users'
 
 export async function userState(user: User) {
   const cfg = serverConfig()
-  const [snap, activity, messages, llmUp, aiRuns, rewards, jobs, verification] = await Promise.all([
+  const [snap, activity, messages, llmUp, aiRuns, rewards, jobs, verification, confirm] = await Promise.all([
     snapshot(user),
     listActivity(user.id, 30),
     listMessages(user.id),
@@ -22,6 +23,7 @@ export async function userState(user: User) {
     rewardProgress(user),
     getJobs(user.id),
     verificationStatus(user),
+    pendingConfirm(user),
   ])
   return {
     user: {
@@ -29,12 +31,17 @@ export async function userState(user: User) {
       name: user.name,
       rootAddress: user.rootAddress,
       agentAddress: user.agentAddress,
+      claimerAddress: user.claimerAddress,
+      claimerActive: user.claimerActive,
+      hasLegacyKey: user.agentKeyEnc !== 'keyless',
       connected: user.connected,
       streak: user.streak,
       telegramLinked: Boolean(user.tgChatId),
       telegramLink: botLink(user.linkCode),
-      hasPending: Boolean(user.pending),
-      pendingId: user.pending?.id ?? null,
+      hasPending: Boolean(user.pending) || Boolean(confirm),
+      pendingId: confirm?.id ?? user.pending?.id ?? null,
+      /** The bill or assistant request waiting for the user's confirmation, exactly as stored. */
+      pendingConfirm: confirm,
       lastRunAt: user.lastRunAt,
       inviteLink: `${cfg.appUrl}/app?ref=${await ensureRefCode(user)}`,
     },
@@ -63,8 +70,13 @@ export async function userState(user: User) {
     messages,
     config: {
       chainMode: cfg.chain.mode,
+      keylessAvailable: Boolean(cfg.chain.claimerFactory),
+      spendingContract: cfg.chain.spendingContract || null,
+      dailyLimitGd: POLICY_DAILY_GD,
+      policyDays: POLICY_DAYS,
       provider: cfg.provider,
       billsLive: cfg.billsLive,
+      moneyMode: cfg.moneyMode,
       llm: !llmUp ? 'rules' : cfg.llm.baseUrl.includes(':8377') ? 'antseed' : 'llm',
       // Spender address for the spending limit people approve in their wallet.
       treasury: cfg.chain.mode === 'celo' ? safeTreasury() : null,

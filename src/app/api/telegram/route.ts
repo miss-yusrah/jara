@@ -9,9 +9,12 @@ import { createUser, getUserByLinkCode, getUserByTelegram, linkTelegram, rotateL
 
 export const dynamic = 'force-dynamic'
 
+type TelegramChat = { id: number; type?: string }
+type TelegramSender = { id: number; is_bot?: boolean; first_name?: string }
+
 interface Update {
-  message?: { message_id: number; chat: { id: number }; from?: { first_name?: string }; text?: string; voice?: unknown }
-  callback_query?: { id: string; data?: string; message?: { chat: { id: number }; message_id: number } }
+  message?: { message_id: number; chat: TelegramChat; from?: TelegramSender; text?: string; voice?: unknown }
+  callback_query?: { id: string; from?: TelegramSender; data?: string; message?: { chat: TelegramChat; message_id: number } }
 }
 
 export async function POST(req: Request) {
@@ -31,11 +34,16 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true })
 }
 
+function privateOwner(chat: TelegramChat | undefined, sender: TelegramSender | undefined): boolean {
+  return chat?.type === 'private' && Number.isSafeInteger(chat.id) && chat.id > 0 && sender?.id === chat.id && sender.is_bot !== true
+}
+
 async function handle(update: Update) {
   const appUrl = serverConfig().appUrl
 
   if (update.callback_query) {
     const cb = update.callback_query
+    if (!privateOwner(cb.message?.chat, cb.from)) return
     if (!/^(confirm|cancel):[a-zA-Z0-9-]+$/.test(cb.data ?? '')) {
       await answerCallback(cb.id)
       return
@@ -50,11 +58,16 @@ async function handle(update: Update) {
     scheduleAutoPay(user.id)
     await run('INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)', [user.id, 'assistant', reply.text, Date.now()])
     await sendMessage(chatId, reply.text + (reply.explorerUrl ? `\n\nReceipt: ${reply.explorerUrl}` : ''))
+    // e.g. the first exam drill that an approved request produced.
+    for (const extra of reply.extra ?? []) {
+      await run('INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)', [user.id, 'assistant', extra, Date.now()])
+      await sendMessage(chatId, extra)
+    }
     return
   }
 
   const msg = update.message
-  if (!msg) return
+  if (!msg || !privateOwner(msg.chat, msg.from)) return
   const chatId = String(msg.chat.id)
   const text = msg.text?.trim() ?? ''
 
@@ -99,6 +112,6 @@ async function handle(update: Update) {
   await sendTyping(chatId)
   const reply = await handleMessage(user.id, text, `telegram:${chatId}:${msg.message_id}`)
   scheduleAutoPay(user.id)
-  await sendMessage(chatId, reply.text, reply.confirm ? CONFIRM_KEYBOARD(reply.confirm.id) : undefined)
+  await sendMessage(chatId, reply.text, reply.confirm ? CONFIRM_KEYBOARD(reply.confirm.id, reply.confirm.action) : undefined)
   for (const m of reply.extra ?? []) await sendMessage(chatId, m)
 }
