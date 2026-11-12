@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { runAgentForAll } from '@/lib/agent/routine'
 import { serverConfig } from '@/lib/env'
 import { sendMessage } from '@/lib/telegram'
+import { flushTelemetry } from '@/lib/telemetry'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -20,5 +21,6 @@ export async function GET(req: Request) {
   const results = await runAgentForAll(async (user, text) => {
     if (user.tgChatId) await sendMessage(user.tgChatId, text)
   })
-  return NextResponse.json({ ran: results.length, results })
+  const telemetry = await flushTelemetry().catch((err) => ({ error: err instanceof Error ? err.message : String(err) }))
+  return NextResponse.json({ ran: results.length, results, telemetry })
 }
