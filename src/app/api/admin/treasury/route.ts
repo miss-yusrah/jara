@@ -3,7 +3,6 @@ import { timingSafeEqual } from 'node:crypto'
 import { serverConfig } from '@/lib/env'
 import { addTopup, deleteTopup, treasuryReport } from '@/lib/treasury'
 import { custodyStatus } from '@/lib/wallets'
-import { retireAgentKeys } from '@/lib/key-retirement'
 import { referralBudgetStatus } from '@/lib/rewards'
 import { run } from '@/lib/db'
 
@@ -23,10 +22,6 @@ const deny = () => NextResponse.json({ error: process.env.ADMIN_KEY ? 'Wrong adm
 export async function GET(req: Request) {
   if (!authorized(req)) return deny()
   // ?custody=1: which key protects the agent wallet keys, and how many still await migration.
-  // ?custody=retire: which stored wallet keys are no longer needed. Reads only; POST { retireKeys: true } deletes them.
-  if (new URL(req.url).searchParams.get('custody') === 'retire') {
-    try { return NextResponse.json(await retireAgentKeys()) } catch (err) { return NextResponse.json({ error: err instanceof Error ? err.message : 'Bad request' }, { status: 400 }) }
-  }
   if (new URL(req.url).searchParams.has('custody')) {
     const cfg = serverConfig()
     const counts = (await run("SELECT COUNT(*) AS accounts, SUM(claimer_active) AS active, SUM(CASE WHEN connected = 1 AND claimer_active = 0 THEN 1 ELSE 0 END) AS awaiting_upgrade, SUM(CASE WHEN agent_key_enc != 'keyless' THEN 1 ELSE 0 END) AS retained_keys FROM users")).rows[0]
@@ -35,12 +30,11 @@ export async function GET(req: Request) {
   return NextResponse.json(await treasuryReport())
 }
 
-// { amountUsd, note } adds a top-up; { deleteId } removes one; { retireKeys: true } deletes unused wallet keys.
+// { amountUsd, note } adds a top-up; { deleteId } removes one.
 export async function POST(req: Request) {
   if (!authorized(req)) return deny()
-  const body = (await req.json().catch(() => ({}))) as { amountUsd?: number; note?: string; deleteId?: number; retireKeys?: boolean }
+  const body = (await req.json().catch(() => ({}))) as { amountUsd?: number; note?: string; deleteId?: number }
   try {
-    if (body.retireKeys === true) return NextResponse.json({ ...(await retireAgentKeys({ apply: true })), custody: await custodyStatus() })
     if (body.deleteId) await deleteTopup(Number(body.deleteId))
     else await addTopup(Number(body.amountUsd), body.note)
   } catch (err) {

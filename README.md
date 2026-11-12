@@ -57,7 +57,7 @@ The app supports keyless claims through [`JaraClaimer`](contracts/src/JaraClaime
 - Setting `CLAIMER_FACTORY_ADDRESS` enables keyless onboarding. Preparation only computes/reads the address; deployment is sponsored after a fresh owner signature tied to the Jara account and an on-chain identity check. This prevents a public deterministic address from being used to take over another person's onboarding.
 - Existing users choose **Profile → Upgrade daily claims**. Their wallet cancels the old treasury allowance, disconnects the old agent identity, and connects the new contract. Activation independently verifies those revocations, the signature, contract owner and GoodDollar addresses; pending legacy transfers block migration. Retries are safe. If interrupted after unlinking, legacy claims pause until the user completes the upgrade.
 - The new claim path never decrypts an agent key. Claims and new rewards go directly to the root wallet. Reward transfers already signed before migration finish at their original destination. Claim gas is estimated by the durable transaction outbox, rather than the legacy fixed gas-top-up budget.
-- After migration, old wallet balances are excluded from spending budgets. Old encrypted keys remain available for owner-signed export and withdrawal until the old wallet is unlinked and empty; an operator then deletes them (see "Retiring old wallet keys" below). Any remaining G$/CELO and old backups still carry legacy-key risk. Users should withdraw old G$, export the old key if needed to recover CELO, and stop depositing into the old address.
+- After migration, old wallet balances are excluded from spending budgets. Old encrypted keys remain available for owner-signed export and withdrawal; they are **not deleted**. Any remaining G$/CELO and old backups still carry legacy-key risk. Users should withdraw old G$, export the old key if needed to recover CELO, and stop depositing into the old address.
 - Removing the factory setting stops new keyless onboarding, but never switches an upgraded user back to agent-key claims. Keep the stored contract columns and current application code when rolling back configuration. Running an older application binary against migrated accounts is unsupported.
 
 [`JaraSpending`](contracts/src/JaraSpending.sol) replaces the direct treasury allowance for upgraded accounts. Only the owner can configure a policy; the contract enforces a total remaining budget, a UTC-calendar-day cap, expiry, a fixed treasury recipient and one-use payment IDs. The UI currently offers G$ 5,000 total, G$ 1,000 per UTC day, for 30 days. The owner may revoke through token approval or the policy. Reconfiguration does not reset spending already used that day. Refunds restore tokens, but do not restore consumed policy budget or token allowance. Purchases larger than the remaining daily cap are unavailable, including automatic bills; jars reflect the currently spendable amount rather than all personal-wallet funds.
@@ -68,16 +68,7 @@ Legacy agent keys continue to use per-wallet envelope encryption in [`wallets.ts
 
 Deployment and verification: [keyless rollout runbook](docs/keyless-rollout.md). The code is not evidence that the live deployment has been migrated. Confirm factory/spending addresses and account counts through the admin custody report after deployment.
 
-Retiring old wallet keys (no external key service needed):
-
-A stored key is only worth protecting while its wallet can still do something. [`key-retirement.ts`](src/lib/key-retirement.ts) deletes a stored key once its wallet is not linked to any GoodDollar identity, holds no G$, and has no transaction, payment or refund in flight. A connected owner who has not upgraded always keeps theirs. Every check fails closed, and nothing runs on a schedule.
-
-1. Owners upgrade in Profile, then withdraw any G$ left in the old wallet (and export the key first if they want the leftover CELO).
-2. `GET /api/admin/treasury?custody=retire` (admin key) lists every stored key with the decision and the reason. It changes nothing.
-3. `POST /api/admin/treasury` with `{"retireKeys": true}` deletes the keys the report marked. Deleting cannot be undone. Repeat as more owners upgrade.
-4. When `?custody=1` reports `"wallets": 0`, no agent key remains in the database. Then replace `WALLET_ENCRYPTION_KEY` with a fresh random value, so the old secret is no longer on the server, move earlier backups off the server (they still contain the old keys and the old secret), and run `VACUUM` once so deleted keys do not linger in free pages of the database file.
-
-Switching an existing deployment to KMS (optional; only useful while stored keys remain):
+Switching an existing deployment to KMS:
 
 1. Back up the database.
 2. Create a symmetric KMS key and an IAM user allowed only `kms:Encrypt` and `kms:Decrypt` on that key. Turn on CloudTrail and an alarm on unusual `Decrypt` volume.
