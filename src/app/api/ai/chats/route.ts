@@ -1,3 +1,4 @@
+import { apiFailure } from '@/lib/api-error'
 import { NextResponse } from 'next/server'
 import { listChats } from '@/lib/ai-chat'
 import { AI_TOOLS, followUpPrice, type AiToolId } from '@/lib/ai-tools'
@@ -6,7 +7,7 @@ import { requireUser } from '@/lib/session'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+async function get() {
   const user = await requireUser()
   if (user instanceof NextResponse) return user
   const [chats, snap] = await Promise.all([listChats(user.id), snapshot(user)])
@@ -24,4 +25,8 @@ export async function GET() {
       followUpGd: followUpPrice(id),
     })),
   })
+}
+
+export async function GET() {
+  try { return await get() } catch (err) { return apiFailure(err, 'ai/chats') }
 }

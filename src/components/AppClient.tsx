@@ -1512,7 +1512,7 @@ function SentByJara({ refreshKey, openNewest }: { refreshKey: string; openNewest
   useEffect(() => {
     let live = true
     fetch('/api/agent/sent')
-      .then((r) => r.json())
+      .then((r) => readApiResponse<{ items?: SentItem[] }>(r))
       .then((j: { items?: SentItem[] }) => {
         if (!live || !j.items) return
         setItems(j.items)
@@ -1868,7 +1868,7 @@ function PayBillSheet({
     if (kind !== 'data' || plans) return
     let live = true
     fetch(`/api/bills?network=${network}`)
-      .then((r) => r.json())
+      .then((r) => readApiResponse<{ plans?: { code: string; name: string; amountNgn: number }[]; error?: string }>(r))
       .then((j: { plans?: { code: string; name: string; amountNgn: number }[]; error?: string }) => {
         if (!live) return
         if (j.plans) setPlans(j.plans)

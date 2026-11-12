@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { clientRequest } from '@/lib/client-request'
+import { readApiResponse, responseMessage } from '@/lib/api-response'
 import { EXAM_OPTIONS, type ExamSession } from '@/lib/exam-paper'
 
 type Home = { connected: boolean; balanceGd: number; priceGd: number; questionCount: number; sessions: { id: number; title: string; count: number; answered: number; submitted: boolean }[] }
@@ -12,9 +13,7 @@ const secondary = 'rounded-xl border border-forest/20 bg-white px-5 py-3 font-se
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
-  const data = await response.json()
-  if (!response.ok) throw Object.assign(new Error(data.error || 'Something went wrong. Please try again.'), { terminal: data.terminal })
-  return data as T
+  return readApiResponse<T>(response)
 }
 
 export function ExamPrep({ initialRun, initialTopic }: { initialRun: number | null; initialTopic: string }) {
@@ -40,7 +39,7 @@ export function ExamPrep({ initialRun, initialTopic }: { initialRun: number | nu
     } catch { /* Draft storage is optional. */ }
       setHome(h); setSession(s); setSaved(Boolean(s))
     } })
-      .catch((e) => { if (active) setError(e.message) })
+      .catch((e) => { if (active) setError(responseMessage(e)) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [initialRun, initialTopic])
@@ -51,7 +50,7 @@ export function ExamPrep({ initialRun, initialTopic }: { initialRun: number | nu
     try {
       setHome(await request<Home>('/api/exams')); setSession(null)
       window.history.replaceState(null, '', '/app/exam'); window.scrollTo(0, 0)
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not load practice sessions.') }
+    } catch (e) { setError(responseMessage(e)) }
     finally { lock.current = false; setBusy(false) }
   }
 
@@ -63,7 +62,7 @@ export function ExamPrep({ initialRun, initialTopic }: { initialRun: number | nu
       setSession(next); setSaved(true)
       window.history.replaceState(null, '', `/app/exam?run=${id}`)
       window.scrollTo(0, 0)
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not open your practice.') }
+    } catch (e) { setError(responseMessage(e)) }
     finally { lock.current = false; setBusy(false) }
   }
 
@@ -84,7 +83,7 @@ export function ExamPrep({ initialRun, initialTopic }: { initialRun: number | nu
       window.scrollTo(0, 0)
     } catch (e) {
       if (e instanceof Error && 'terminal' in e && e.terminal) payment.finish()
-      setError(e instanceof Error ? e.message : 'Could not prepare your practice. Please retry.')
+      setError(responseMessage(e))
     } finally { lock.current = false; setBusy(false) }
   }
 
@@ -103,7 +102,7 @@ export function ExamPrep({ initialRun, initialTopic }: { initialRun: number | nu
       if (options.choice === undefined) { window.scrollTo(0, 0); heading.current?.focus() }
     } catch (e) {
       setSession(session)
-      setError(e instanceof Error ? e.message : 'Could not save your answer. Please try again.')
+      setError(responseMessage(e))
     }
     finally { lock.current = false; setBusy(false) }
   }

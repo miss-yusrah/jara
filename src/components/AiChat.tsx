@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { readApiResponse, responseMessage } from '@/lib/api-response'
+import { readChatEvents } from '@/lib/chat-response'
 import { clientRequest } from '@/lib/client-request'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon, type IconName } from './Icon'
@@ -70,9 +72,11 @@ export function AiChat() {
   }
 
   const loadHome = useCallback(async () => {
-    const res = await fetch('/api/ai/chats', { cache: 'no-store' })
-    if (res.status === 401) return setHome('signed-out')
-    setHome((await res.json()) as Home)
+    try {
+      const res = await fetch('/api/ai/chats', { cache: 'no-store' })
+      if (res.status === 401) return setHome('signed-out')
+      setHome(await readApiResponse<Home>(res))
+    } catch (err) { setError(responseMessage(err)) }
   }, [])
 
   useEffect(() => {
@@ -91,12 +95,13 @@ export function AiChat() {
   const openChat = async (id: string) => {
     setDrawer(false)
     setError(null)
-    const res = await fetch(`/api/ai/chats/${id}`, { cache: 'no-store' })
-    if (!res.ok) return
-    const data = (await res.json()) as { chat: ChatSummary; messages: Msg[] }
-    setChatId(id)
-    setToolId(data.chat.tool)
-    setMessages(data.messages)
+    try {
+      const res = await fetch(`/api/ai/chats/${id}`, { cache: 'no-store' })
+      const data = await readApiResponse<{ chat: ChatSummary; messages: Msg[] }>(res)
+      setChatId(id)
+      setToolId(data.chat.tool)
+      setMessages(data.messages)
+    } catch (err) { setError(responseMessage(err)) }
   }
 
   const newChat = (tool?: string) => {
@@ -110,9 +115,11 @@ export function AiChat() {
   }
 
   const removeChat = async (id: string) => {
-    await fetch(`/api/ai/chats/${id}`, { method: 'DELETE' })
-    if (id === chatId) newChat()
-    void loadHome()
+    try {
+      await readApiResponse(await fetch(`/api/ai/chats/${id}`, { method: 'DELETE' }))
+      if (id === chatId) newChat()
+      await loadHome()
+    } catch (err) { setError(responseMessage(err)) }
   }
 
   const send = async () => {
@@ -140,48 +147,31 @@ export function AiChat() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...original, requestId: request.id }),
       })
-      if (!res.ok || !res.body) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string }
-        throw new Error(j.error ?? 'Something went wrong')
-      }
-      const reader = res.body.getReader()
-      const dec = new TextDecoder()
-      let buf = ''
       let failed: string | null = null
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += dec.decode(value, { stream: true })
-        let nl: number
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl)
-          buf = buf.slice(nl + 1)
-          if (!line.trim()) continue
-          const ev = JSON.parse(line) as { t: string; v?: string; chatId?: string; messageId?: number; costGd?: number; message?: string; demo?: boolean; terminal?: boolean }
-          if (ev.t === 'chat' && ev.chatId) setChatId(ev.chatId)
-          else if (ev.t === 'delta' && ev.v) setMessages((m) => m.map((x) => (x.id === tempAi.id ? { ...x, content: x.content + ev.v } : x)))
-          else if (ev.t === 'done') {
-            completed = true
+      for await (const ev of readChatEvents(res)) {
+        if (ev.t === 'chat' && ev.chatId) setChatId(ev.chatId)
+        else if (ev.t === 'delta' && ev.v) setMessages((m) => m.map((x) => (x.id === tempAi.id ? { ...x, content: x.content + ev.v } : x)))
+        else if (ev.t === 'done') {
+          completed = true
+          request.finish()
+          retry.current = null
+          setHasRetry(false)
+          try { window.sessionStorage.removeItem('jara:ai-retry') } catch { /* unavailable */ }
+          setMessages((m) => m.map((x) => (x.id === tempAi.id ? { ...x, id: ev.messageId ?? x.id, costGd: ev.costGd ?? 0, pending: false } : x)))
+        } else if (ev.t === 'error') {
+          failed = ev.message ?? 'Something went wrong'
+          if (ev.terminal) {
             request.finish()
             retry.current = null
             setHasRetry(false)
             try { window.sessionStorage.removeItem('jara:ai-retry') } catch { /* unavailable */ }
-            setMessages((m) => m.map((x) => (x.id === tempAi.id ? { ...x, id: ev.messageId ?? x.id, costGd: ev.costGd ?? 0, pending: false } : x)))
-          } else if (ev.t === 'error') {
-            failed = ev.message ?? 'Something went wrong'
-            if (ev.terminal) {
-              request.finish()
-              retry.current = null
-              setHasRetry(false)
-              try { window.sessionStorage.removeItem('jara:ai-retry') } catch { /* unavailable */ }
-            }
           }
         }
       }
       if (failed) throw new Error(failed)
       if (!completed) throw new Error('The connection ended before confirmation. Retry to check the same request.')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
+      setError(responseMessage(err))
       setMessages((m) => m.filter((x) => x.id !== tempAi.id && x.id !== tempUser.id))
       setInput(text)
     } finally {
@@ -190,7 +180,7 @@ export function AiChat() {
     }
   }
 
-  if (home === null) return <div className="grid min-h-dvh place-items-center bg-cream font-bold text-ink/50">Loading Jara AI…</div>
+  if (home === null) return <div className="grid min-h-dvh place-items-center bg-cream p-6 font-bold text-ink/70">{error ? <div role="alert" className="max-w-md text-center"><p>{error}</p><button className="mt-4 underline" onClick={() => { setError(null); void loadHome() }}>Try again</button><Link className="ml-5 underline" href="/app">Back to Jara</Link></div> : 'Loading Jara AI…'}</div>
   if (home === 'signed-out' || !home.user.connected) {
     return (
       <main className="grid min-h-dvh place-items-center bg-forest px-4">

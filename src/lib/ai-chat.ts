@@ -1,3 +1,4 @@
+import { responseMessage } from './api-response'
 import { jarSpendable } from './jars'
 import { randomBytes } from 'node:crypto'
 import { formatEther, parseEther } from 'viem'
@@ -153,7 +154,7 @@ export async function* sendChat(user: User, input: { requestId: string; chatId?:
     push(await finishChatPayment(user, request.id, data))
   }).catch((err) => {
     console.warn('[ai-chat]', err instanceof Error ? err.message : err)
-    push({ t: 'error', message: err instanceof Error ? err.message : 'Could not confirm the result. Retry the same request to check it.' })
+    push({ t: 'error', message: responseMessage(err, 'Could not confirm the result. Retry the same request to check it.') })
   }).finally(() => { finished = true; resolveNext?.() })
   for (;;) {
     if (events.length) { yield events.shift()!; continue }
