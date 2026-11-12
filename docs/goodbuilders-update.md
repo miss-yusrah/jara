@@ -4,6 +4,15 @@ Thank you for the review. We have implemented and deployed fixes covering the se
 
 Existing-user wallet migration is still pending owner approval. The upgrade is implemented and available, but we cannot sign the required wallet transactions on users’ behalf. Details and remaining exposure are below.
 
+**Requested findings at a glance**
+
+Your first email asked for an update on four findings, in this order. Each is answered under the heading named here; the other sections cover the later seven-finding review.
+
+- Custody: “Agent-wallet custody”
+- JAR-06 (AI spending without enforced consent): “J-05 / earlier JAR-06 — Enforced approval for AI spending”
+- J-01 (demo money with live bill payments): “J-01 — Demo/live separation”
+- JAR-05 (referral rewards per unique person): “J-07 / earlier JAR-05 — Identity-based referrals and treasury caps”
+
 **Agent-wallet custody**
 
 New production accounts use immutable, per-owner claim contracts and have no agent private key. Claims forward G$ atomically to the owner’s wallet; Jara cannot change the recipient. A separate spending contract enforces the owner’s total budget, UTC-day limit and expiry, with a fixed recipient and replay protection.

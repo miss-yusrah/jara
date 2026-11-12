@@ -72,9 +72,20 @@ Switching an existing deployment to KMS:
 
 1. Back up the database.
 2. Create a symmetric KMS key and an IAM user allowed only `kms:Encrypt` and `kms:Decrypt` on that key. Turn on CloudTrail and an alarm on unusual `Decrypt` volume.
-3. Set `WALLET_KEY_PROVIDER=aws-kms` and the four `WALLET_KMS_*` variables. Keep `WALLET_ENCRYPTION_KEY` for now, then deploy.
-4. Existing keys move over when first used and in the daily cron, each verified before it replaces the old row. `GET /api/admin/treasury?custody=1` (admin key) shows how many are still pending.
-5. When it reports `"pending": 0`, delete `WALLET_ENCRYPTION_KEY` from the server and handle retained backups under your backup-retention policy; they may still contain legacy ciphertext and require the old key for restoration. Do not discard recovery material before confirming wallet recovery and backup requirements.
+3. Add the four `WALLET_KMS_*` variables to the server environment, leaving `WALLET_KEY_PROVIDER` as it is, and prove they work before any wallet depends on them:
+
+   ```sh
+   node --env-file=.env.production.local --require ./tests/register.cjs scripts/check-kms.cjs
+   ```
+
+   It wraps and unwraps a throwaway key and confirms KMS refuses to unwrap it for a different wallet. It reads no database and no wallet key.
+4. Set `WALLET_KEY_PROVIDER=aws-kms`. Keep `WALLET_ENCRYPTION_KEY` for now, then restart the app.
+5. Existing keys move over when first used and in the daily cron, each verified under KMS before it replaces the old row; a failure leaves the old row in place and logs `[custody] could not re-wrap wallet key`. `GET /api/admin/treasury?custody=1` (admin key) shows how many are still pending.
+6. When it reports `"pending": 0`:
+   - Delete `WALLET_ENCRYPTION_KEY` from the server environment.
+   - Move every earlier backup off the server. A backup holding the old database and the old environment file still contains every legacy key and the secret that opens them, so leaving it beside the app undoes this step. Keep one copy offline: restoring an old backup needs the old secret.
+   - Run `VACUUM` on the database once, so superseded copies of the wrapped keys do not linger in free pages of the file.
+7. Never disable or schedule deletion of the KMS key while retained wallet keys exist: they cannot be opened without it. Owners who exported their key are unaffected.
 
 ### The assistant cannot spend without approval
 

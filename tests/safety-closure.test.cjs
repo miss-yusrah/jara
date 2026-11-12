@@ -2,7 +2,7 @@
 const { test, after } = require('node:test')
 const assert = require('node:assert/strict')
 const { mkdtempSync, rmSync } = require('node:fs')
-const directory = mkdtempSync('/private/tmp/jara-safety-')
+const directory = mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'jara-safety-'))
 Object.assign(process.env, { DATABASE_URL: `file:${directory}/test.db`, CHAIN_MODE: 'mock', TOPUP_PROVIDER: 'mock', TELEGRAM_WEBHOOK_SECRET: 'test-webhook-secret', WALLET_ENCRYPTION_KEY: '2'.repeat(64) })
 for (const key of ['TREASURY_PRIVATE_KEY', 'FALCONPAY_API_KEY', 'VTPASS_API_KEY']) delete process.env[key]
 const { db, run } = require('../src/lib/db.ts')
