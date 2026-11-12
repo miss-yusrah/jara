@@ -5,7 +5,7 @@ const { mkdtempSync, rmSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const path = require('node:path')
 const Module = require('node:module')
-const { keccak256 } = require('viem')
+const { keccak256, encodeEventTopics, parseAbi, encodeAbiParameters } = require('viem')
 const directory = mkdtempSync(path.join(tmpdir(), 'jara-outbox-'))
 process.env.DATABASE_URL = `file:${directory}/test.db`
 process.env.CHAIN_MODE = 'mock'
@@ -84,13 +84,20 @@ test('a reverted receipt remains failed on every retry', async () => {
   assert.equal(broadcasts, previousBroadcasts)
 })
 
-test('a successful receipt without the expected token transfer is not a successful payment', async () => {
+test('a successful receipt without the expected transfer stays pending and never releases its nonce', async () => {
   outcome = 'success'
-  await assert.rejects(outbox.durableTransaction('missing-transfer-event', key, {
-    ...intent,
-    transfer: { token: intent.to, from: intent.to, to: intent.to, amount: '100' },
-  }), outbox.TransferRevertedError)
-  assert.equal((await run('SELECT status FROM chain_transactions WHERE id = ?', ['missing-transfer-event'])).rows[0].status, 'reverted')
+  const input = { ...intent, transfer: { token: intent.to, from: intent.to, to: intent.to, amount: '100' } }
+  await assert.rejects(outbox.durableTransaction('missing-transfer-event', key, input), outbox.TransferPendingError)
+  const row = (await run('SELECT * FROM chain_transactions WHERE id = ?', ['missing-transfer-event'])).rows[0]
+  assert.equal(row.status, 'pending')
+  const previousSigned = signed
+  await assert.rejects(outbox.durableTransaction('missing-transfer-event', key, input), outbox.TransferPendingError)
+  await assert.rejects(outbox.durableTransaction('conflicting-payment', key, intent), outbox.TransferPendingError)
+  assert.equal(signed, previousSigned)
+  // A later consistent RPC receipt can settle the original transfer, never a replacement.
+  receipts.get(row.hash).logs = [{ address: intent.to, topics: encodeEventTopics({ abi: parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']), eventName: 'Transfer', args: { from: intent.to, to: intent.to } }), data: encodeAbiParameters([{ type: 'uint256' }], [100n]) }]
+  assert.equal((await outbox.durableTransaction('missing-transfer-event', key, input)).hash, row.hash)
+  assert.equal(signed, previousSigned)
 })
 
 after(async () => {

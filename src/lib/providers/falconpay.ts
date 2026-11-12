@@ -229,8 +229,9 @@ export class FalconPayProvider implements TopupProvider {
     if (status !== 200 || !json.data) return { state: 'pending', reference, message: json.message }
     const d = json.data
     const base = resultBase(d, reference, json.message)
+    if (d.settled === false || (d.reference && d.reference !== reference)) return { ...base, state: 'pending' }
     if (d.status && FAILED.test(d.status)) return { ...base, state: 'failed' }
-    if (d.status && DONE.test(d.status) && d.settled !== false) return { ...base, state: 'success' }
+    if (d.status && DONE.test(d.status)) return { ...base, state: 'success' }
     return { ...base, state: 'pending' }
   }
 
@@ -271,16 +272,16 @@ function resultBase(d: BillData, reference: string, message?: string) {
 function interpretPay(status: number, json: FalconResponse<BillData>, reference: string): TopupResult {
   const d = json.data ?? {}
   const base = resultBase(d, reference, json.message ?? json.error)
-  if (status === 200) {
+  // A transport status is not proof that a submitted purchase did not deliver.
+  // Unsettled/conflicting responses must be resolved through the saved reference.
+  if (d.settled === false || (d.reference && d.reference !== reference)) return { ...base, state: 'pending' }
+  if (status === 202 || status === 409) return { ...base, state: 'pending' }
+  if (status === 200 || status === 422) {
     if (d.status && FAILED.test(d.status)) return { ...base, state: 'failed' }
-    if (d.status && DONE.test(d.status)) return { ...base, state: 'success' }
-    return { ...base, state: 'pending' } // accepted, not confirmed yet
+    if (status === 200 && d.status && DONE.test(d.status)) return { ...base, state: 'success' }
   }
-  if (status === 202) return { ...base, state: 'pending' } // in flight — never a failure
-  if (status === 409) return { ...base, state: 'pending' } // reference already used: find out what happened to it
-  // 400 invalid, 401/403 auth or bills disabled, 422 declined (wallet refunded), 503 biller down (nothing debited)
-  if ([400, 401, 403, 422, 503].includes(status)) return { ...base, state: 'failed', message: json.message || `FalconPay declined (HTTP ${status})` }
-  return { ...base, state: 'pending' } // 5xx/unknown: outcome unknown, keep checking
+  return { ...base, state: 'pending' } // HTTP errors alone never authorize a refund.
+
 }
 
 /**

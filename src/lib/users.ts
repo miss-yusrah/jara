@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { Row } from '@libsql/client'
-import { run } from './db'
+import { atomic, run } from './db'
 import { createAgentWallet } from './wallets'
 import { serverConfig } from './env'
 
@@ -129,6 +129,18 @@ export const getUserBySession = (t: string) => one('SELECT * FROM users WHERE se
 export const getUserByTelegram = (chatId: string) => one('SELECT * FROM users WHERE tg_chat_id = ?', [chatId])
 export const getUserByLinkCode = (code: string) => one('SELECT * FROM users WHERE link_code = ?', [code])
 export const getUserByRefCode = (code: string) => one('SELECT * FROM users WHERE ref_code = ?', [code])
+
+/** Consume a bearer link in one write transaction, shared by web sign-in and Telegram linking. */
+export async function consumeLinkCode(code: string): Promise<User | null> {
+  if (!code || code.length > 128) return null
+  return atomic(async tx => {
+    const row = (await tx.execute({ sql: 'SELECT * FROM users WHERE link_code = ?', args: [code] })).rows[0]
+    if (!row) return null
+    const next = randomBytes(12).toString('hex')
+    await tx.execute({ sql: 'UPDATE users SET link_code = ? WHERE id = ? AND link_code = ?', args: [next, row.id, code] })
+    return toUser({ ...row, link_code: next })
+  })
+}
 
 /** Replace the sign-in/link code once it has been used, so a forwarded or leaked link stops working. */
 export async function rotateLinkCode(userId: string): Promise<string> {

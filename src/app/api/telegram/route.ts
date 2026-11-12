@@ -5,7 +5,7 @@ import { handleMessage, resolvePending } from '@/lib/agent'
 import { run } from '@/lib/db'
 import { serverConfig } from '@/lib/env'
 import { CONFIRM_KEYBOARD, answerCallback, editKeyboard, sendMessage, sendTyping } from '@/lib/telegram'
-import { createUser, getUserByLinkCode, getUserByTelegram, linkTelegram, rotateLinkCode } from '@/lib/users'
+import { createUser, consumeLinkCode, getUserByTelegram, linkTelegram } from '@/lib/users'
 
 export const dynamic = 'force-dynamic'
 
@@ -73,10 +73,9 @@ async function handle(update: Update) {
 
   if (text.startsWith('/start')) {
     const code = text.split(/\s+/)[1]
-    const linked = code ? await getUserByLinkCode(code) : null
+    const linked = code ? await consumeLinkCode(code) : null
     if (linked) {
       await linkTelegram(linked.id, chatId)
-      await rotateLinkCode(linked.id)
       await sendMessage(chatId, `You're linked${linked.name ? `, ${linked.name}` : ''} 🙌 I'll message you here every morning after I claim your G$.\n\nTry: "How much is in my jars?"`)
       return
     }

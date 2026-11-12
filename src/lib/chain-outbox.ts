@@ -70,9 +70,18 @@ async function settleSignedTransaction(row: Row) {
   const expected = (JSON.parse(String(row.intent)) as { transfer?: TransferExpectation }).transfer
   const transferred = !expected || parseEventLogs({ abi: transferAbi, eventName: 'Transfer', logs: receipt.logs }).some((event) =>
     event.address.toLowerCase() === expected.token.toLowerCase() && event.args.from.toLowerCase() === expected.from.toLowerCase() && event.args.to.toLowerCase() === expected.to.toLowerCase() && event.args.value === BigInt(expected.amount))
-  const success = receipt.status === 'success' && transferred
-  await run('UPDATE chain_transactions SET status = ?, fee_wei = ? WHERE id = ?', [success ? 'confirmed' : 'reverted', feeWei.toString(), row.id])
-  if (!success) throw new TransferRevertedError(hash)
+  if (receipt.status === 'reverted') {
+    await run("UPDATE chain_transactions SET status = 'reverted', fee_wei = ? WHERE id = ?", [feeWei.toString(), row.id])
+    throw new TransferRevertedError(hash)
+  }
+  // A successful receipt with unexpected token logs does not prove that nothing
+  // moved. Retain the reservation/signer nonce until the transfer is reconciled.
+  if (receipt.status !== 'success' || !transferred) {
+    console.warn('[chain] receipt needs transfer reconciliation', hash)
+    throw new TransferPendingError(hash)
+  }
+  await run("UPDATE chain_transactions SET status = 'confirmed', fee_wei = ? WHERE id = ?", [feeWei.toString(), row.id])
+
   return { hash, feeWei }
 }
 

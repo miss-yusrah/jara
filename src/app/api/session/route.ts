@@ -2,7 +2,7 @@ import { after, NextResponse } from 'next/server'
 import { apiFailure } from '@/lib/api-error'
 import { SESSION_COOKIE, currentUser, setSessionCookie } from '@/lib/session'
 import { settlePendingBills } from '@/lib/bills'
-import { createUser, getUserById, getUserByLinkCode, getUserByRefCode, rotateLinkCode } from '@/lib/users'
+import { createUser, getUserById, consumeLinkCode, getUserByRefCode } from '@/lib/users'
 import { clientIp, rateLimit } from '@/lib/ratelimit'
 import { userState } from '../_shared'
 import { recoverUserPayments } from '@/lib/money-recovery'
@@ -31,10 +31,9 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { name?: string; tg?: string; ref?: string }
   // Arriving from the Telegram bot's "Set up" button: sign in as that chat's user.
   if (typeof body.tg === 'string' && body.tg) {
-    const fromTg = await getUserByLinkCode(body.tg)
+    const fromTg = await consumeLinkCode(body.tg)
     if (fromTg) {
       // Single use: the code in the Telegram button stops working once it has signed someone in.
-      await rotateLinkCode(fromTg.id)
       const res = NextResponse.json(await userState(fromTg))
       setSessionCookie(res, fromTg.sessionToken)
       return res

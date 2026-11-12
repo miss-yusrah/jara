@@ -130,4 +130,16 @@ test('global referral budget includes simultaneous reservations, retries and his
   assert.equal(Number((await run('SELECT SUM(amount_gd) AS n FROM referral_budget')).rows[0].n), 3000)
 })
 
+test('a sign-in link is consumed atomically across simultaneous requests and stays consumed after restart', async () => {
+  const user = await users.createUser()
+  const results = await Promise.all(Array.from({ length: 5 }, () => users.consumeLinkCode(user.linkCode)))
+  assert.equal(results.filter(Boolean).length, 1)
+  assert.equal(results.find(Boolean).id, user.id)
+  await restart()
+  assert.equal(await users.consumeLinkCode(user.linkCode), null)
+  const fresh = await users.getUserById(user.id)
+  assert.notEqual(fresh.linkCode, user.linkCode)
+  assert.equal((await users.consumeLinkCode(fresh.linkCode)).id, user.id)
+})
+
 after(async () => { (await db()).close(); rmSync(directory, { recursive: true, force: true }) })
