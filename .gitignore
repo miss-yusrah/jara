@@ -8,3 +8,9 @@ next-env.d.ts
 
 # Local walkthrough renders, screenshots, and temporary capture data.
 /output/
+
+# Local editor and assistant files.
+.cursor/
+*.code-workspace
+/AGENTS.md
+/CLAUDE.md
