@@ -62,7 +62,7 @@ export async function runDaily(user: User, opts: { force?: boolean } = {}): Prom
   const paid: string[] = []
   for (const jar of await getJars(user.id)) {
     // Jars with a known cadence are paid on their due date by the agent routine instead.
-    if (!isBillKind(jar.kind) || !jar.autoPay || jar.everyDays) continue
+    if (!serverConfig().billsLive || !isBillKind(jar.kind) || !jar.autoPay || jar.everyDays) continue
     const view = (await snapshot(user)).jars.find((j) => j.kind === jar.kind)!
     if (view.balanceNgn < jar.targetNgn || jar.targetNgn <= 0) continue
     const prepared = await prepareBill(user, { kind: jar.kind, amountNgn: jar.targetNgn })

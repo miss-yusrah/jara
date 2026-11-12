@@ -1,3 +1,4 @@
+import { serverConfig } from '../env'
 import { formatEther } from 'viem'
 import { describeAction, payBill, prepareBill } from '../bills'
 import { formatNgn } from '../catalog'
@@ -34,7 +35,7 @@ export async function runAgent(userId: string, opts: { force?: boolean } = {}): 
 
   // PAY: bills with a known cadence
   user = (await getUserById(userId))!
-  for (const jar of await getJars(user.id)) {
+  for (const jar of serverConfig().billsLive ? await getJars(user.id) : []) {
     if (!isBillKind(jar.kind) || !jar.everyDays) continue
     const kind = jar.kind
     const due = jarDueAt(jar)

@@ -58,7 +58,7 @@ interface State {
   snapshot: { jars: JarView[]; totalGd: number; freeGd: number; freeNgn: number; ngnPerGd: number }
   activity: Activity[]
   messages: Msg[]
-  config: { chainMode: 'celo' | 'mock'; provider: string; llm: string }
+  config: { chainMode: 'celo' | 'mock'; provider: string; billsLive: boolean; llm: string }
 }
 
 const JAR_COLOR: Record<JarView['kind'], JarColor> = { light: 'crest', data: 'mandarin', airtime: 'forest', ai: 'mandarin' }
@@ -139,6 +139,11 @@ function TopBar({ state }: { state: State | null }) {
           <span className="text-xl font-extrabold">Jara</span>
         </Link>
         <div className="flex items-center gap-3">
+          {state?.user.connected && (
+            <Link href="/app/ai" className="press flex items-center gap-1.5 rounded-full border-[2.5px] border-ink bg-crest px-3.5 py-1.5 text-sm font-extrabold text-ink">
+              <Icon name="sparkle" className="h-4 w-4" /> Jara AI
+            </Link>
+          )}
           {state?.config.chainMode === 'mock' && <span className="text-xs font-bold tracking-widest text-cream/50 uppercase">Demo</span>}
           {state?.user.name && (
             <span className="grid h-9 w-9 place-items-center rounded-full bg-crest text-sm font-extrabold text-ink">{state.user.name.slice(0, 1).toUpperCase()}</span>
@@ -169,7 +174,7 @@ function Welcome({ onStart, refCode }: { onStart: (s: State) => void; refCode?: 
       </div>
       <div className="text-center">
         <h1 className="text-5xl leading-none font-extrabold tracking-tight">Hi, I&apos;m Jara.</h1>
-        <p className="mt-4 text-lg font-medium text-ink/75">I&apos;m your AI bill agent. I&apos;ll collect your GoodDollar every day and use it to pay your light, data and airtime.</p>
+        <p className="mt-4 text-lg font-medium text-ink/75">I&apos;m your AI agent. I collect your GoodDollar every day and put it to work: Jara AI for research and assignments, savings jars, and G$ rewards.</p>
       </div>
       <form
         className="grid gap-4"
@@ -424,10 +429,12 @@ function Dashboard({ state, setState, flash }: { state: State; setState: (s: Sta
       <div className="mb-4 grid grid-cols-3 rounded-full bg-forest/10 p-1 lg:hidden">
         {(['home', 'work', 'chat'] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`rounded-full py-2.5 text-sm font-extrabold transition ${tab === t ? 'bg-forest text-cream shadow' : 'text-forest'}`}>
-            {t === 'home' ? 'Agent' : t === 'work' ? 'AI & rewards' : 'Chat'}
+            {t === 'home' ? 'Agent' : t === 'work' ? 'Rewards' : 'Chat'}
           </button>
         ))}
       </div>
+
+      <AiLaunch state={state} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:items-start">
         <div className="grid gap-6">
@@ -436,7 +443,6 @@ function Dashboard({ state, setState, flash }: { state: State; setState: (s: Sta
             <JarShelf jars={snap.jars} onEdit={setEditing} totalGd={snap.totalGd} rate={snap.ngnPerGd} />
           </div>
           <div className={show('work')}>
-            <AiStudio state={state} setState={setState} flash={flash} />
             <RewardsCard state={state} flash={flash} />
           </div>
           <div className={show('home')}>
@@ -511,8 +517,8 @@ function AgentPanel({ state, busy, onRun, lastSteps }: { state: State; busy: boo
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-px border-t-[4px] border-ink bg-ink sm:grid-cols-4">
-        {LANES.map((l) => {
+      <div className={`grid grid-cols-2 gap-px border-t-[4px] border-ink bg-ink ${state.config.billsLive ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
+        {LANES.filter((l) => state.config.billsLive || l.id !== 'pay').map((l) => {
           const items = recent.filter((a) => LANE_OF[a.type] === l.id)
           const latest = items[0]
           const fresh = lastSteps?.filter((s) => s.lane === l.id) ?? []
@@ -588,111 +594,36 @@ function JarShelf({ jars, onEdit, totalGd, rate }: { jars: JarView[]; onEdit: (j
   )
 }
 
-function AiStudio({ state, setState, flash }: { state: State; setState: (s: State) => void; flash: (t: string) => void }) {
-  const [toolId, setToolId] = useState<string>(state.aiTools[0]?.id ?? 'research')
-  const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ tool: string; input: string; output: string; costGd: number; demo: boolean } | null>(null)
-  const tool = state.aiTools.find((t) => t.id === toolId) ?? state.aiTools[0]
-  const aiJar = state.snapshot.jars.find((j) => j.kind === 'ai')
-  const canAfford = state.snapshot.totalGd >= tool.priceGd
-
-  const ask = async () => {
-    setBusy(true)
-    try {
-      const r = await api<{ output: string; costGd: number; demo: boolean; state: State }>('/api/ai', { tool: tool.id, input })
-      setState(r.state)
-      setResult({ tool: tool.name, input, output: r.output, costGd: r.costGd, demo: r.demo })
-      flash(r.demo ? 'Demo preview — not charged' : `Done · G$ ${gdFmt(r.costGd)} from your AI jar`)
-    } catch (err) {
-      flash(err instanceof Error ? err.message : 'Something went wrong')
-    } finally {
-      setBusy(false)
-    }
-  }
-
+function AiLaunch({ state }: { state: State }) {
+  const quick = [
+    { id: 'research', label: 'Research a topic' },
+    { id: 'assignment', label: 'Help with an assignment' },
+    { id: 'exam', label: 'Exam practice' },
+    { id: 'brainstorm', label: 'Brainstorm ideas' },
+  ]
   return (
-    <section className="overflow-hidden rounded-[2rem] border-[4px] border-ink bg-white shadow-chunk">
-      <div className="flex flex-wrap items-end justify-between gap-3 bg-mandarin px-5 py-5 sm:px-6">
+    <section className="mb-6 overflow-hidden rounded-[2rem] border-[4px] border-ink bg-mandarin shadow-chunk">
+      <div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[1fr_auto] lg:items-center">
         <div>
-          <h2 className="text-2xl leading-tight font-extrabold">AI helpers, paid with your G$</h2>
-          <p className="mt-1 text-sm font-semibold text-ink/70">Research, assignments, brainstorming and more. Your G$ funds the AI.</p>
-        </div>
-        <div className="rounded-2xl border-[3px] border-ink bg-cream px-3 py-2 text-right">
-          <p className="text-[11px] font-extrabold tracking-widest text-ink/50 uppercase">AI jar</p>
-          <p className="leading-none font-extrabold">G$ {gdFmt(aiJar?.balanceGd ?? 0)}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-4 sm:p-5">
-        {state.aiTools.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => {
-              setToolId(t.id)
-              setResult(null)
-            }}
-            className={`rounded-2xl p-3 text-left transition ${t.id === tool.id ? 'bg-forest text-cream' : 'bg-cream ring-2 ring-ink/10 hover:ring-ink/30'}`}
-          >
-            <p className="text-sm leading-tight font-extrabold">{t.name}</p>
-            <p className={`mt-1 text-xs font-bold ${t.id === tool.id ? 'text-crest' : 'text-ink/50'}`}>G$ {gdFmt(t.priceGd)}</p>
-          </button>
-        ))}
-      </div>
-
-      <div className="border-t-2 border-ink/10 px-4 pt-4 pb-5 sm:px-5">
-        <p className="text-sm font-semibold text-ink/65">{tool.blurb}</p>
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={tool.placeholder}
-          rows={3}
-          className="mt-3 w-full resize-none rounded-2xl border-2 border-ink/15 bg-cream/50 px-4 py-3 font-semibold outline-none focus:border-ink"
-        />
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            onClick={ask}
-            disabled={busy || input.trim().length < 3 || !canAfford}
-            className="press rounded-2xl border-[3px] border-ink bg-mandarin px-5 py-3 font-extrabold shadow-chunk-sm disabled:opacity-50"
-          >
-            {busy ? 'Thinking…' : `Ask · G$ ${gdFmt(tool.priceGd)}`}
-          </button>
-          <p className="text-xs font-semibold text-ink/50">{canAfford ? 'Only charged when you get an answer.' : 'Not enough G$ yet — your jars fill every day.'}</p>
-        </div>
-
-        {result && (
-          <div className="animate-pop mt-5 overflow-hidden rounded-2xl border-[3px] border-ink">
-            <div className="flex items-center justify-between gap-2 bg-crest px-4 py-2">
-              <p className="truncate text-sm font-extrabold">{result.tool}</p>
-              <button
-                onClick={() => navigator.clipboard?.writeText(result.output).then(() => flash('Copied'), () => undefined)}
-                className="shrink-0 rounded-full bg-ink px-3 py-1 text-xs font-bold text-cream"
-              >
-                Copy
-              </button>
-            </div>
-            <div className="max-h-[420px] overflow-y-auto bg-white px-4 py-3 text-[15px] leading-relaxed font-medium whitespace-pre-wrap">{result.output}</div>
+          <p className="inline-flex items-center gap-1.5 rounded-full bg-ink px-3 py-1 text-xs font-extrabold tracking-widest text-crest uppercase">
+            <Icon name="sparkle" className="h-3.5 w-3.5" /> Jara AI
+          </p>
+          <h2 className="mt-3 text-3xl leading-[0.95] font-extrabold tracking-tight sm:text-4xl">Research, assignments and more. Paid with your G$.</h2>
+          <p className="mt-2 max-w-xl font-semibold text-ink/75">Chat like you would with ChatGPT. Every answer downloads as a neat PDF.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {quick.map((q) => (
+              <Link key={q.id} href={`/app/ai?tool=${q.id}`} className="rounded-full border-2 border-ink bg-cream px-3.5 py-1.5 text-sm font-bold hover:bg-white">
+                {q.label}
+              </Link>
+            ))}
           </div>
-        )}
-
-        {!result && state.aiRuns.length > 0 && (
-          <div className="mt-5">
-            <p className="mb-2 text-xs font-extrabold tracking-widest text-ink/45 uppercase">Recent</p>
-            <ul className="grid gap-1.5">
-              {state.aiRuns.slice(0, 4).map((r) => (
-                <li key={r.id}>
-                  <button
-                    onClick={() => setResult({ tool: state.aiTools.find((t) => t.id === r.tool)?.name ?? r.tool, input: r.input, output: r.output, costGd: r.costGd, demo: r.demo })}
-                    className="flex w-full items-center justify-between gap-3 rounded-xl bg-cream/60 px-3 py-2 text-left text-sm hover:bg-cream"
-                  >
-                    <span className="truncate font-bold">{r.input}</span>
-                    <span className="shrink-0 text-xs font-bold text-ink/45">{r.demo ? 'demo' : `G$ ${gdFmt(r.costGd)}`}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        </div>
+        <div className="flex flex-col items-start gap-2 lg:items-end">
+          <Link href="/app/ai" className="press inline-flex items-center gap-2 rounded-2xl border-[3px] border-ink bg-forest px-6 py-4 text-lg font-extrabold text-cream shadow-chunk-sm">
+            Open Jara AI <Icon name="arrow" className="h-5 w-5" strokeWidth={2.75} />
+          </Link>
+          <p className="text-sm font-bold text-ink/70">You have G$ {gdFmt(state.snapshot.totalGd)}</p>
+        </div>
       </div>
     </section>
   )
@@ -1072,7 +1003,7 @@ function Chat({ state, setState, flash }: { state: State; setState: (s: State) =
 
       <div className="border-t-2 border-ink/10 bg-white px-3 pt-3">
         <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-          {CHIPS.map((c) => (
+          {CHIPS.filter((c) => state.config.billsLive || !c.includes('₦')).map((c) => (
             <button
               key={c}
               onClick={() => send({ text: c })}

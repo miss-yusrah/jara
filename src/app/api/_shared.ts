@@ -41,6 +41,7 @@ export async function userState(user: User) {
     config: {
       chainMode: cfg.chain.mode,
       provider: cfg.provider,
+      billsLive: cfg.billsLive,
       llm: !llmUp ? 'rules' : cfg.llm.baseUrl.includes(':8377') ? 'antseed' : 'llm',
     },
   }

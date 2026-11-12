@@ -40,6 +40,9 @@ export async function prepareBill(
   user: User,
   draft: Omit<PendingAction, 'createdAt'>,
 ): Promise<{ action: PendingAction } | { error: string }> {
+  if (!serverConfig().billsLive) {
+    return { error: "I can't pay bills just yet. For now I save your G$, collect rewards, and Jara AI can help with research, assignments and more." }
+  }
   const { maxBillNgn } = serverConfig().limits
   const amount = Math.round(draft.amountNgn)
   if (!Number.isFinite(amount) || amount <= 0) return { error: 'How much should I pay? Give me an amount in naira.' }

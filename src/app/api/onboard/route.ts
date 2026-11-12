@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAddress, isAddress } from 'viem'
 import { whitelistedRoot } from '@/lib/chain'
 import { serverConfig } from '@/lib/env'
+import { runDaily } from '@/lib/daily'
 import { requireUser } from '@/lib/session'
 import { getUserById, logActivity, updateUser } from '@/lib/users'
 import { bad, userState } from '../_shared'
@@ -42,6 +43,8 @@ export async function POST(req: Request) {
     if (!user.connected) {
       await updateUser(user.id, { connected: true })
       await logActivity(user.id, { type: 'move', title: 'Jara connected to your GoodDollar account 🎉' })
+      // First claim right away so new people can use Jara AI immediately.
+      await runDaily((await getUserById(user.id))!).catch((err) => console.warn('[onboard] first claim failed', err))
     }
     return NextResponse.json(await userState((await getUserById(user.id))!))
   }

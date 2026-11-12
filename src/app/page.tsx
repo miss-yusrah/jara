@@ -274,7 +274,7 @@ export default function Home() {
       <footer className="bg-forest-deep py-10 text-cream/70">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 text-sm font-semibold sm:flex-row sm:px-6">
           <p className="flex items-center gap-2"><Icon name="jar" className="h-4 w-4" /> Jara · GoodBuilders Season 5</p>
-          <p>Built on GoodDollar &amp; Celo · Brain on AntSeed · by Calbridge Digital Labs · <a href="https://github.com/Calebux/jara" target="_blank" rel="noreferrer" className="underline hover:text-cream">GitHub</a></p>
+          <p>Built on GoodDollar &amp; Celo · Brain on AntSeed · by Calbridge Digital Labs · <a href="https://github.com/miss-yusrah/jara" target="_blank" rel="noreferrer" className="underline hover:text-cream">GitHub</a></p>
         </div>
       </footer>
     </main>

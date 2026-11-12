@@ -63,6 +63,8 @@ export function serverConfig() {
       webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET ?? '',
     },
     provider: provider as 'vtpass' | 'mock',
+    // Bill payments only run with a real provider (or the local demo flag), never faked for testers.
+    billsLive: provider !== 'mock' || process.env.DEMO_BILLS === 'true',
     vtpass: {
       env: vtpassEnv,
       baseUrl: vtpassEnv === 'live' ? 'https://vtpass.com/api' : 'https://sandbox.vtpass.com/api',

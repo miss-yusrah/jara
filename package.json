@@ -15,14 +15,19 @@
   "dependencies": {
     "@goodsdks/citizen-sdk": "^1.2.7",
     "@libsql/client": "^0.18.0",
+    "marked": "^18.1.2",
     "next": "^16.3.5",
+    "pdfkit": "^0.20.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "viem": "^2.57.14"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^20.19.43",
+    "@types/pdfkit": "^0.17.7",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "eslint": "^9.39.5",

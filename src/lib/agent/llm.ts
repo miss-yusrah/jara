@@ -67,3 +67,42 @@ export async function llmReachable(): Promise<boolean> {
   probe = { ok, at: Date.now() }
   return ok
 }
+
+/** Stream a plain chat completion (no tools). Yields text as it arrives. */
+export async function* chatStream(messages: ChatMessage[], maxTokens = 1500): AsyncGenerator<string> {
+  const cfg = serverConfig().llm
+  if (cfg.disabled) throw new Error('LLM disabled')
+  if (!rateLimit('llm:global', cfg.dailyCallCap, 24 * 60 * 60_000)) throw new Error('LLM daily call cap reached')
+  const headers: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` }
+  if (cfg.antseedPeer) headers['x-antseed-pin-peer'] = cfg.antseedPeer
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model: cfg.model, messages, stream: true, temperature: 0.4, max_tokens: maxTokens }),
+    signal: AbortSignal.timeout(180_000),
+  })
+  if (!res.ok || !res.body) throw new Error(`LLM HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (!line.startsWith('data:')) continue
+      const data = line.slice(5).trim()
+      if (data === '[DONE]') return
+      try {
+        const json = JSON.parse(data) as { choices?: { delta?: { content?: string | null } }[] }
+        const piece = json.choices?.[0]?.delta?.content
+        if (piece) yield piece
+      } catch {
+        /* keep-alive or partial line */
+      }
+    }
+  }
+}
