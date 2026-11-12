@@ -968,7 +968,7 @@ function Chat({ state, setState, flash }: { state: State; setState: (s: State) =
         {state.messages.length === 0 && !optimistic && (
           <ChatBubble
             me={false}
-            text={`Hi${state.user.name ? ` ${state.user.name}` : ''}! I’m your AI agent. I save your G$, pay your bills, find you rewards — and your G$ pays for AI help with research, assignments and ideas. Ask me anything — I’ll always show you before I pay.`}
+            text={`Hi${state.user.name ? ` ${state.user.name}` : ''}! I’m your AI agent. ${state.config.billsLive ? 'I save your G$, pay your bills, find you rewards — and your G$ pays for AI help with research, assignments and ideas. Ask me anything — I’ll always show you before I pay.' : 'I save your G$, find you rewards, and your G$ pays for Jara AI: research, assignments, exam practice and more. Ask me anything.'}`}
           />
         )}
         {state.messages.map((m) => (
@@ -1027,7 +1027,7 @@ function Chat({ state, setState, flash }: { state: State; setState: (s: State) =
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Abeg send ₦500 airtime to 0803…"
+            placeholder={state.config.billsLive ? 'Abeg send ₦500 airtime to 0803…' : 'Ask Jara anything…'}
             className="min-w-0 flex-1 rounded-full bg-cream px-5 py-3.5 font-semibold ring-2 ring-transparent outline-none focus:ring-ink"
           />
           <button
