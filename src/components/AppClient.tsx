@@ -1051,7 +1051,7 @@ function ChatBubble({ me, text }: { me: boolean; text: string }) {
           me ? 'rounded-br-md bg-forest text-cream' : 'rounded-bl-md bg-white text-ink ring-1 ring-ink/10'
         }`}
       >
-        {text}
+        {me ? text : text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => (part.startsWith('**') && part.endsWith('**') && part.length > 4 ? <strong key={i} className="font-extrabold">{part.slice(2, -2)}</strong> : part))}
       </p>
     </div>
   )
