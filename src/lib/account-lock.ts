@@ -1,13 +1,16 @@
 import { run } from './db'
 import { withMoneyLock } from './money-lock'
 
-/** Serialize all accounts using the same funding wallet, across workers. */
-export async function withAccountLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+/**
+ * Serialize all accounts using the same funding wallet, across workers.
+ * `waitMs` queues behind whatever holds the account for that long before giving up.
+ */
+export async function withAccountLock<T>(userId: string, fn: () => Promise<T>, opts: { waitMs?: number } = {}): Promise<T> {
   return withMoneyLock(`user:${userId}`, async () => {
     const row = (await run('SELECT root_address FROM users WHERE id = ?', [userId])).rows[0]
     const root = row?.root_address
-    return root ? withMoneyLock(`wallet:${String(root).toLowerCase()}`, fn) : fn()
-  })
+    return root ? withMoneyLock(`wallet:${String(root).toLowerCase()}`, fn, opts) : fn()
+  }, opts)
 }
 
 /** An uncertain shared-wallet charge must settle before either account spends again. */

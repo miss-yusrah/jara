@@ -74,7 +74,7 @@ Code: [identity checks and budget reservations](https://github.com/miss-yusrah/j
 
 **Validation and remaining work**
 
-- 122 application tests, typecheck, lint and the production build passed.
+- 123 application tests, typecheck, lint and the production build passed.
 - All 16 local Solidity tests passed again; earlier contract checks included the combined migration/claim/spending flow on a Celo fork with two verified identities.
 - Live checks covered keyless signup, blocked demo deposits, Telegram group/foreign-sender rejection, public endpoints and admin access control. Migration was tested against a private production database snapshot before activation.
 - Existing owners still need to approve their wallet migration and recover old balances. One previously recorded legacy claim is still pending and may block the affected account’s upgrade until reconciled; its original transaction journal has been preserved. We have not completed an independent contract audit or a production owner-migration walkthrough, and do not present tests or source verification as substitutes for that review.

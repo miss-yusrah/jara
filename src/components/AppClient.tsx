@@ -158,7 +158,16 @@ async function linkClaimContract(provider: EIP1193Provider, state: State, status
   status('Sign to finish linking this Jara account…')
   const issuedAt = Date.now()
   const signature = await wallet.signMessage({ account, message: walletClaimerMessage(prepared.user.id, account, prepared.user.claimerAddress, issuedAt) })
-  return api<State>('/api/onboard', { action: 'check', issuedAt, signature })
+  // The wallet work is done; do not make the owner sign again because the account was briefly
+  // busy. Finishing is idempotent, and this signature stays valid for five minutes.
+  for (let attempt = 0; ; attempt++) {
+    try { return await api<State>('/api/onboard', { action: 'check', issuedAt, signature }) }
+    catch (err) {
+      if (!(err instanceof ApiError) || !err.retryable || attempt >= 3) throw err
+      status('Finishing your upgrade…')
+      await new Promise((resolve) => setTimeout(resolve, 4000))
+    }
+  }
 }
 
 async function api<T>(path: string, body?: unknown, method?: 'DELETE'): Promise<T> {

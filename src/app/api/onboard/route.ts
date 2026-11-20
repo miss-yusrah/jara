@@ -6,6 +6,7 @@ import { runDaily } from '@/lib/daily'
 import { requireUser } from '@/lib/session'
 import { getUserById, logActivity, updateUser } from '@/lib/users'
 import { bad, userState } from '../_shared'
+import { apiFailure } from '@/lib/api-error'
 import { withUserLock } from '@/lib/jars'
 import { WALLET_LINKED_MESSAGE, accountForWallet, bindWallet } from '@/lib/wallet-authorization'
 import { activateClaimer, prepareClaimer } from '@/lib/claimers'
@@ -16,11 +17,18 @@ export const dynamic = 'force-dynamic'
 // Step 2: they connect our agent wallet to it (connectAccount, signed in their wallet).
 // Step 3: we confirm on-chain that the agent wallet now resolves to their identity.
 export async function POST(req: Request) {
+  // A wallet owner has usually just approved transactions and signed to get here. Never answer
+  // them with a bare 500: say what happened, in JSON, so the same request can be retried.
+  try { return await post(req) } catch (err) { return apiFailure(err, 'onboard') }
+}
+
+async function post(req: Request) {
   const user = await requireUser()
   if (user instanceof NextResponse) return user
   const body = (await req.json().catch(() => ({}))) as { action?: string; address?: string; issuedAt?: number; signature?: string }
   const mock = serverConfig().chain.mode === 'mock'
 
+  // Queue behind a background refresh or payment check on this account instead of failing.
   return withUserLock(user.id, async () => {
     let fresh = (await getUserById(user.id))!
 
@@ -92,5 +100,5 @@ export async function POST(req: Request) {
     }
 
     return bad('Unknown action')
-  })
+  }, { waitMs: 15_000 })
 }

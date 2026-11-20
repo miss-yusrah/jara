@@ -253,6 +253,34 @@ test('connected users cannot replace their wallet through onboarding', async () 
   } finally { session.requireUser = original }
 })
 
+test('onboarding waits for a briefly busy account and never answers with a bare server error', async () => {
+  const user = await fixture()
+  const session = require('../src/lib/session.ts')
+  const { withMoneyLock } = require('../src/lib/money-lock.ts')
+  const original = { requireUser: session.requireUser, getUserById: users.getUserById }
+  session.requireUser = async () => user
+  const send = (body) => require('../src/app/api/onboard/route.ts').POST(new Request('http://localhost/api/onboard', { method: 'POST', body: JSON.stringify(body) }))
+  try {
+    // Something else (a background refresh, a payment check) holds the account for a moment.
+    let released = false
+    const holder = withMoneyLock(`user:${user.id}`, () => new Promise((resolve) => setTimeout(() => { released = true; resolve() }, 900)))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const waited = await send({ action: 'name', address: 'Ada' })
+    await holder
+    assert.equal(waited.status, 200)
+    assert.equal(released, true)
+    assert.equal((await waited.json()).user.name, 'Ada')
+
+    // An unexpected failure still comes back as JSON the app can read and retry.
+    users.getUserById = async () => { throw new Error('database unavailable') }
+    const failed = await send({ action: 'check' })
+    assert.equal(failed.status, 503)
+    const body = await failed.json()
+    assert.equal(body.retryable, true)
+    assert.match(body.error, /retry this same request/)
+  } finally { session.requireUser = original.requireUser; users.getUserById = original.getUserById }
+})
+
 test('AI preserves its answer through an uncertain charge and records paid only after confirmation', async () => {
   const user = await fixture()
   const ai = require('../src/lib/ai-tools.ts')
