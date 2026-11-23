@@ -96,7 +96,7 @@ export async function runAgent(
     const jars = snap.jars.map((j) => `${JAR_INFO[j.kind].label} ${j.pct}%`).join(' · ')
     const message = steps.length
       ? `Here’s what I handled for you:\n${steps.map((s) => `• ${s.text}`).join('\n')}\n\nJars: ${jars} (${formatNgn(Math.floor(snap.totalGd * snap.ngnPerGd))} saved)`
-      : `All quiet — nothing needed doing. Jars: ${jars}`
+      : `${daily.claimMessage} Jars: ${jars}`
     return { steps, message, notices }
   })
 }

@@ -244,7 +244,9 @@ test('the daily run claims, then leaves the claimed G$ in the owner\'s wallet an
   let user = await users.createUser()
   await users.updateUser(user.id, { connected: true, rootAddress: owner })
   user = await users.getUserById(user.id)
-  const originals = { balanceBlock: chain.balanceBlock, whitelistedRoot: chain.whitelistedRoot, gdBalance: chain.gdBalance, gdAllowance: chain.gdAllowance, transferFromAgent: chain.transferFromAgent, claimUbi: chain.claimUbi }
+  const originals = { balanceBlock: chain.balanceBlock, whitelistedRoot: chain.whitelistedRoot, gdBalance: chain.gdBalance, gdAllowance: chain.gdAllowance, transferFromAgent: chain.transferFromAgent, claimUbi: chain.claimUbi, ubiClaimPeriod: chain.ubiClaimPeriod }
+  let period = 1
+  chain.ubiClaimPeriod = async () => ({ id: `test-period-${period}`, startsAt: Date.now() - 1000, endsAt: Date.now() + 86400000 })
   const world = { agent: 0n, wallet: 0n, allowance: gd(5000), sends: [] }
   chain.balanceBlock = async () => undefined
   chain.whitelistedRoot = async () => owner
@@ -265,6 +267,12 @@ test('the daily run claims, then leaves the claimed G$ in the owner\'s wallet an
     // A second run the same day neither claims nor sends again.
     await daily.runDaily(await users.getUserById(user.id))
     assert.equal(world.sends.length, 1)
+    // A new UBI period on the same local day must claim AND forward again.
+    period++
+    const next = await daily.runDaily(await users.getUserById(user.id))
+    assert.equal(next.claimed, gd(126))
+    assert.equal(world.sends.length, 2)
+    assert.equal(world.wallet, gd(250))
   } finally { Object.assign(chain, originals); process.env.CHAIN_MODE = 'mock'; delete process.env.GD_NGN_RATE; delete process.env.GD_PER_CELO }
 })
 

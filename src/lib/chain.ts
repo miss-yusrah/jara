@@ -20,6 +20,7 @@ import { atomic, run } from './db'
 import { durableTransaction, hasSubmittedTransaction } from './chain-outbox'
 import { serverConfig } from './env'
 import { spendingPolicyAbi } from './spending-policy'
+import { retryBlockRead } from './chain-read'
 
 // GoodDollar production contracts on Celo, as listed in @goodsdks/citizen-sdk constants.
 export const GD = {
@@ -36,6 +37,7 @@ export const identityAbi = parseAbi([
 const ubiAbi = parseAbi([
   'function claim() returns (bool)',
   'function checkEntitlement(address _member) view returns (uint256)',
+  'function periodStart() view returns (uint256)',
   'event UBIClaimed(address indexed account, uint256 amount)',
 ])
 const erc20Abi = parseAbi([
@@ -93,7 +95,7 @@ export async function balanceBlock(): Promise<bigint | undefined> {
 
 export async function gdBalance(address: Address, blockNumber?: bigint): Promise<bigint> {
   if (isMock()) return mockBalance(address)
-  return publicClient().readContract({ address: GD.token, abi: erc20Abi, functionName: 'balanceOf', args: [address], blockNumber })
+  return retryBlockRead(() => publicClient().readContract({ address: GD.token, abi: erc20Abi, functionName: 'balanceOf', args: [address], blockNumber }))
 }
 
 /** The verified GoodDollar identity an address belongs to, or null. */
@@ -113,6 +115,20 @@ export async function entitlement(address: Address): Promise<bigint> {
   if (isMock()) return parseEther(String(serverConfig().limits.mockDailyClaimGd))
   const root = (await whitelistedRoot(address)) ?? address
   return publicClient().readContract({ address: GD.ubi, abi: ubiAbi, functionName: 'checkEntitlement', args: [root] })
+}
+
+/** GoodDollar's 24-hour claim periods start at periodStart, not local midnight.
+ * Use the latest chain timestamp so a stored currentDay awaiting the next claim
+ * cannot keep us in the old period. Read both values against the same block. */
+export async function ubiClaimPeriod() {
+  const rpc = publicClient()
+  const block = await rpc.getBlock()
+  if (block.number === null) throw new Error('The claim period block is not confirmed.')
+  const start = await retryBlockRead(() => rpc.readContract({ address: GD.ubi, abi: ubiAbi, functionName: 'periodStart', blockNumber: block.number! }))
+  if (start > block.timestamp) throw new Error('GoodDollar claims have not started yet.')
+  const index = (block.timestamp - start) / 86_400n
+  const startsAt = start + index * 86_400n
+  return { id: `ubi-${start}-${index}`, startsAt: Number(startsAt) * 1000, endsAt: Number(startsAt + 86_400n) * 1000 }
 }
 
 const identityExpiryAbi = parseAbi([
@@ -284,9 +300,9 @@ export async function gdAllowance(owner: Address, blockNumber?: bigint, policy =
     // back to a direct treasury allowance when configuration is absent.
     if (!address) return 0n
     await verifySpendingContract()
-    return publicClient().readContract({ address: address as Address, abi: spendingPolicyAbi, functionName: 'available', args: [owner], blockNumber })
+    return retryBlockRead(() => publicClient().readContract({ address: address as Address, abi: spendingPolicyAbi, functionName: 'available', args: [owner], blockNumber }))
   }
-  return publicClient().readContract({ address: GD.token, abi: erc20Abi, functionName: 'allowance', args: [owner, treasuryAddress()], blockNumber })
+  return retryBlockRead(() => publicClient().readContract({ address: GD.token, abi: erc20Abi, functionName: 'allowance', args: [owner, treasuryAddress()], blockNumber }))
 }
 
 /** Pull G$ from the person's own wallet into the treasury, within the limit they approved. */

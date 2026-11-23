@@ -4,6 +4,7 @@ import { clientIp, rateLimit } from '@/lib/ratelimit'
 import { requireUser } from '@/lib/session'
 import { getUserById } from '@/lib/users'
 import { bad, userState } from '../../_shared'
+import { apiFailure } from '@/lib/api-error'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,7 +20,6 @@ export async function POST(req: Request) {
     const r = await runAgent(user.id)
     return NextResponse.json({ steps: r.steps, message: r.message, notices: r.notices, state: await userState((await getUserById(user.id))!) })
   } catch (err) {
-    console.error('[agent/run]', err)
-    return bad('Jara hit a snag. Try again shortly.', 502)
+    return apiFailure(err, 'agent/run')
   }
 }

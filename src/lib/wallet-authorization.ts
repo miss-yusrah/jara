@@ -15,6 +15,13 @@ export async function accountForWallet(rootAddress: string, exceptUserId?: strin
 
 export const WALLET_LINKED_MESSAGE = 'This wallet already has a Jara account. Sign back in with this wallet to open it.'
 
+export class WalletLinkError extends Error {
+  constructor() {
+    super('Your wallet link has changed. Open Wallet details and reconnect daily claims. If your GoodDollar verification expired, renew it first.')
+    this.name = 'WalletLinkError'
+  }
+}
+
 export async function bindWallet(userId: string, rootAddress: string) {
   await atomic(async (tx) => {
     const root = rootAddress.toLowerCase()
@@ -38,7 +45,7 @@ export async function authorizedUser(input: User): Promise<User> {
   if (serverConfig().chain.mode !== 'mock') {
     const root = await whitelistedRoot(claimAddress(user))
     if (!root || root.toLowerCase() !== user.rootAddress.toLowerCase()) {
-      throw new Error('Your wallet link has changed. Reconnect your GoodDollar account before spending.')
+      throw new WalletLinkError()
     }
     await bindWallet(user.id, user.rootAddress)
   }

@@ -14,6 +14,8 @@ import { walletClaimerMessage, walletKeyExportMessage, walletLoginMessage } from
 import { spendingPolicyAbi } from '@/lib/spending-policy'
 import { useSheetDialog } from './useSheetDialog'
 import { DashboardNav, dashboardView, type DashboardView } from './DashboardNav'
+import { DailyChallenge } from './DailyChallenge'
+import type { ClaimHealth } from '@/lib/claim-health'
 import { faceVerificationLink, requestAddress, walletErrorMessage } from '@/lib/wallet-connect'
 import { cancelConnect, getWalletProvider, prewarmWallet, resumeWallet, switchWallet } from '@/lib/web3auth'
 
@@ -423,6 +425,7 @@ function Welcome({ onStart, refCode }: { onStart: (s: State, provider: EIP1193Pr
             </form>
           </>
         )}
+        {(fresh || returning) && <div className="mt-5"><WalletAddressCard key={(fresh ?? returning)!.address} address={(fresh ?? returning)!.address} /></div>}
         <div className="mt-7 border-t border-ink/10 pt-5">
           <p className="text-xs font-bold tracking-wider text-ink/45 uppercase">Then we’ll help you</p>
           <ol className="mt-3 grid gap-3 text-sm text-ink/65">
@@ -590,6 +593,10 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
           {state.user.name ? `${state.user.name}, let's` : "Let's"} connect your GoodDollar.
         </h1>
       </div>
+
+      {(state.user.rootAddress || unverified?.address || linked) && (
+        <WalletAddressCard address={(state.user.rootAddress || unverified?.address || linked)!} />
+      )}
 
       <Step n={1} title="Your GoodDollar account" done={step > 1} active={step === 1}>
         {step === 1 ? (
@@ -814,7 +821,7 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
       const r = await api<{ steps: { lane: Lane; text: string }[]; message: string; state: State }>('/api/agent/run', {})
       setState(r.state)
       setLastSteps(r.steps)
-      flash(r.steps.length ? `Jara handled ${r.steps.length} thing${r.steps.length > 1 ? 's' : ''}` : 'All quiet — nothing needed doing')
+      flash(r.steps.length ? `Jara handled ${r.steps.length} thing${r.steps.length > 1 ? 's' : ''}` : r.message)
     })
 
   const headings: Record<DashboardView, { title: string; description: string }> = {
@@ -836,9 +843,11 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
             <p className="mt-2 text-sm leading-relaxed text-ink/55">{headings[tab].description}</p>
           </div>
           <div className="lg:hidden"><button onClick={() => navigate('guide')} className="app-button-secondary text-xs">Getting started</button></div>
-          <div className="hidden items-center gap-2 rounded-full border border-ink/10 bg-white px-3.5 py-2 text-xs font-semibold lg:flex"><Icon name="flame" className="h-4 w-4 text-mandarin" /> {state.user.streak}-day streak</div>
+          <div className="hidden items-center gap-2 rounded-full border border-ink/10 bg-white px-3.5 py-2 text-xs font-semibold lg:flex"><Icon name="flame" className="h-4 w-4 text-mandarin" /> {state.user.streak}-day claim streak</div>
         </div>
 
+        <div hidden={tab !== 'overview' && tab !== 'rewards'} className="max-w-3xl"><DailyChallenge rootAddress={state.user.rootAddress} /></div>
+        {!mock && <div hidden={tab !== 'overview' && tab !== 'automations'} className="mb-6 max-w-3xl"><ClaimHealthCard state={state} setState={setState} flash={flash} /></div>}
         <div hidden={tab !== 'overview'}>
           <div className="overview-grid">
             <div className="grid min-w-0 content-start gap-6">
@@ -974,6 +983,38 @@ function BalanceBar({ state, onProfile, onPay }: { state: State; onProfile: () =
   )
 }
 
+function WalletAddressCard({ address }: { address: string }) {
+  const field = useRef<HTMLTextAreaElement>(null)
+  const [result, setResult] = useState<{ address: string; copied: boolean } | null>(null)
+  const current = result?.address === address ? result : null
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(address)
+      setResult({ address, copied: true })
+    } catch {
+      setResult({ address, copied: false })
+      field.current?.focus()
+      field.current?.select()
+    }
+  }
+
+  return (
+    <section aria-label="Your wallet address" className="min-w-0 rounded-2xl border border-forest/15 bg-white p-4">
+      <label className="grid min-w-0 gap-2 text-sm font-semibold">
+        <span>Your wallet address <span className="ml-1 text-xs font-normal text-ink/55">· Celo</span></span>
+        <textarea ref={field} aria-label="Your wallet address" readOnly value={address} rows={2} spellCheck={false} onFocus={(event) => event.currentTarget.select()} className="w-full min-w-0 resize-none rounded-xl border border-ink/10 bg-[#f7f8f2] px-3 py-2 font-mono text-sm leading-6 font-normal break-all text-ink select-all" />
+      </label>
+      <button type="button" onClick={() => void copy()} className="app-button-secondary mt-3 min-h-11 w-full justify-center">
+        {current?.copied ? 'Copied!' : 'Copy address'}
+      </button>
+      <p role="status" className="mt-2 text-xs leading-relaxed text-ink/60">
+        {current ? current.copied ? 'Wallet address copied.' : 'Couldn’t copy automatically. Select the address above to copy it.' : 'Use this address to receive G$ or CELO on Celo.'}
+      </p>
+    </section>
+  )
+}
+
 /** Profile: totals, the Jara wallet's gas, and the person's own GoodDollar wallet. */
 function ProfileSheet({ state, setState, flash, onClose, onSignOut }: { state: State; setState: (s: State) => void; flash: (t: string) => void; onClose: () => void; onSignOut: () => void }) {
   const dialogRef = useSheetDialog(onClose)
@@ -994,7 +1035,9 @@ function ProfileSheet({ state, setState, flash, onClose, onSignOut }: { state: S
           </button>
         </div>
         <div className="grid gap-5 p-5">
+          {state.config.chainMode !== 'mock' && state.user.rootAddress && <WalletAddressCard address={state.user.rootAddress} />}
           {state.config.chainMode === 'mock' && <div className="rounded-2xl bg-white p-5"><p className="font-bold">Your demo wallet</p><p className="mt-2 text-sm leading-relaxed text-ink/60">This preview uses simulated G$. Explore your jars and try a budget move. No real wallet is connected.</p></div>}
+          {state.config.chainMode !== 'mock' && <ClaimHealthCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && <SpendingCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && (state.config.keylessAvailable || state.user.claimerAddress) && <ClaimerCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && snap.mode === 'jar' && <GasCard state={state} setState={setState} flash={flash} />}
@@ -1116,6 +1159,72 @@ function WalletKeyCard({ state }: { state: State }) {
 }
 
 /** Spending from their own wallet: the limit, claimed G$, and switching it on or off. */
+function ClaimHealthCard({ state, setState, flash }: { state: State; setState: (s: State) => void; flash: (t: string) => void }) {
+  const [health, setHealth] = useState<ClaimHealth | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const refresh = useCallback(async () => {
+    const result = await api<ClaimHealth>('/api/claim')
+    setHealth(result)
+    return result
+  }, [])
+  useEffect(() => {
+    let active = true
+    void api<ClaimHealth>('/api/claim').then((result) => { if (active) setHealth(result) }).catch(() => {
+      if (active) setHealth({ status: 'unknown', message: 'Could not check automatic claims. Try checking again shortly.' })
+    })
+    return () => { active = false }
+  }, [state.user.claimerAddress, state.user.lastRunAt, state.user.streak])
+
+  const reconnect = async (provider: EIP1193Provider) => {
+    setBusy(true); setError(null)
+    try {
+      const wallet = createWalletClient({ chain: celo, transport: custom(provider) })
+      const [account] = await wallet.requestAddresses()
+      if (account.toLowerCase() !== state.user.rootAddress?.toLowerCase()) throw new Error('Switch to your verified GoodDollar wallet to reconnect daily claims.')
+      await wallet.switchChain({ id: celo.id }).catch(() => wallet.addChain({ chain: celo }))
+      const address = state.user.claimerActive ? state.user.claimerAddress : state.user.agentAddress
+      if (!address) throw new Error('Your claim wallet is missing. Contact support.')
+      const rpc = createPublicClient({ chain: celo, transport: http() })
+      const linked = await rpc.readContract({ address: IDENTITY, abi: CONNECT_ABI, functionName: 'getWhitelistedRoot', args: [address as `0x${string}`] })
+      if (linked.toLowerCase() !== account.toLowerCase()) {
+        flash('Approve reconnecting daily claims in your wallet.')
+        const hash = await wallet.writeContract({ account, address: IDENTITY, abi: CONNECT_ABI, functionName: 'connectAccount', args: [address as `0x${string}`] })
+        const receipt = await rpc.waitForTransactionReceipt({ hash, timeout: 90_000 })
+        if (receipt.status !== 'success') throw new Error('The wallet link was not restored. Please try again.')
+      }
+      const result = await refresh()
+      if (result.status !== 'ready' && result.status !== 'waiting') throw new Error(result.message)
+      flash('Daily claims are reconnected. Jara will retry automatically.')
+    } catch (err) { setError(err instanceof ApiError ? err.message : walletErrorMessage(err)) }
+    finally { setBusy(false) }
+  }
+
+  return <section className="app-card p-5" aria-label="Automatic claims">
+    <h4 className="font-bold">Automatic claims</h4>
+    <p className="mt-2 text-sm leading-relaxed text-ink/70" role="status">{health?.message ?? 'Checking your claim wallet…'}</p>
+    {health?.nextPeriodAt && <p className="mt-2 text-xs text-ink/60">Next claim period: {new Intl.DateTimeFormat('en-NG', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' }).format(health.nextPeriodAt)} (Lagos)</p>}
+    <div className="mt-3 flex flex-wrap items-center gap-3">
+      {health?.status === 'reconnect' && <WalletActionButton disabled={busy} label={busy ? 'Finish in your wallet…' : 'Reconnect daily claims'} onProvider={reconnect} onError={(err) => setError(walletErrorMessage(err))} />}
+      {health?.status === 'verify' && <a href="https://wallet.gooddollar.org" target="_blank" rel="noopener noreferrer" className="app-button bg-forest text-cream">Renew GoodDollar verification</a>}
+      {health?.status === 'ready' && <button className="app-button bg-forest text-cream" disabled={busy} onClick={async () => {
+        setBusy(true); setError(null)
+        try {
+          const result = await api<{ message: string; state: State }>('/api/claim', {})
+          setState(result.state); flash(result.message); await refresh()
+        } catch (err) { setError(err instanceof Error ? err.message : 'Could not confirm the claim. Try again shortly.') }
+        finally { setBusy(false) }
+      }}>{busy ? 'Checking claim…' : 'Claim now'}</button>}
+      <button className="text-sm font-semibold text-forest underline disabled:opacity-50" disabled={busy} onClick={async () => {
+        setBusy(true); setError(null)
+        try { await refresh() } catch { setError('Could not check the network. Try again shortly.') }
+        finally { setBusy(false) }
+      }}>Check again</button>
+    </div>
+    {error && <p role="alert" className="mt-3 text-sm text-mandarin">{error}</p>}
+  </section>
+}
+
 function ClaimerCard({ state, setState, flash }: { state: State; setState: (s: State) => void; flash: (t: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)

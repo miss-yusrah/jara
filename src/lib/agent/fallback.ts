@@ -17,6 +17,7 @@ export function directIntent(raw: string): Intent | null {
   const text = raw.trim().replace(/[’]/g, "'")
   if (/^(?:my balance|balance|check my balance|what(?:'s| is) in my jars|my jars|wetin dey my jars)[?!.]*$/i.test(text)) return { type: 'balance' }
   if (/^(?:my rewards|show my rewards|rewards)[?!.]*$/i.test(text)) return { type: 'rewards' }
+  if (/^(?:please\s+)?(?:claim|collect)(?:\s+(?:my\s+)?(?:daily\s+)?(?:g\$|ubi|gooddollar))?(?:\s+(?:now|today|for me))?[.!]*$/i.test(text)) return { type: 'claim' }
   const match = text.match(/^(?:please\s+)?(?:(?:buy|send|recharge|pay(?:\s+for)?)\s+)?(?:₦|ngn\s*|n)?([\d,]+(?:\.\d+)?)\s*(k)?\s+(?:(mtn|airtel|glo|9mobile)\s+)?airtime(?:\s+(?:for\s+me|(?:to|for)\s+((?:\+?234|0)[\d\s-]{9,15})))?[.!]?$/i)
   if (!match) return null
   const value = Number(match[1].replace(/,/g, '')) * (match[2] ? 1000 : 1)

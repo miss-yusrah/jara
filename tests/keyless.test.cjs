@@ -27,6 +27,10 @@ chain.whitelistedRoot = async (address) => roots.get(address.toLowerCase()) ?? n
 chain.verifyWalletSignature = verifyMessageShim
 async function verifyMessageShim(address, message, signature) { return verifyMessage({ address, message, signature }) }
 chain.entitlement = async () => entitlement
+chain.ubiClaimPeriod = async () => {
+  const index = Math.floor((Date.now() - 12 * 3600000) / 86400000)
+  return { id: `ubi-test-${index}`, startsAt: index * 86400000 + 12 * 3600000, endsAt: (index + 1) * 86400000 + 12 * 3600000 }
+}
 chain.balanceBlock = async () => 1n
 chain.gdBalance = async (address) => address.toLowerCase() === owner.address.toLowerCase() ? parseEther('5000') : agentBalance
 outbox.hasSubmittedTransaction = async (id) => submitted.has(id)
@@ -188,6 +192,112 @@ test('old gas debt stays reserved and is never appended to a newly approved purc
   const sent = calls.find(c => c.id === 'charge:quoted-only')
   assert.equal(sent.input.transfer.amount, String(parseEther('50')))
   assert.equal(String((await run('SELECT gas_owed_wei FROM users WHERE id = ?', [user.id])).rows[0].gas_owed_wei), String(parseEther('10')))
+})
+
+test('zero entitlement does not finish the day, and old false claim markers are retried', async () => {
+  const daily = require('../src/lib/daily.ts')
+  const now = Date.now
+  const before = await users.getUserById(user.id)
+  Date.now = () => now() + 86400000
+  try {
+    entitlement = 0n
+    const unavailable = await daily.runDaily(before)
+    assert.equal(unavailable.claimed, 0n)
+    assert.equal((await users.getUserById(user.id)).lastClaimDay, before.lastClaimDay, 'no claim was confirmed, so do not suppress later attempts')
+    assert.equal(unavailable.claimStatus, 'not_available')
+    // Reproduce a false marker already written by an older deployment.
+    await users.updateUser(user.id, { lastClaimDay: daily.lagosDay() })
+    entitlement = parseEther('100')
+    const retry = await daily.runDaily(await users.getUserById(user.id))
+    assert.equal(retry.claimed, parseEther('100'))
+    assert.equal(retry.claimStatus, 'claimed')
+    assert.equal((await daily.runDaily(await users.getUserById(user.id))).claimStatus, 'already_claimed')
+  } finally { Date.now = now; entitlement = parseEther('100') }
+})
+
+test('noon UTC opens a new claim on the same Lagos date; Lagos midnight does not reopen it', async () => {
+  const daily = require('../src/lib/daily.ts')
+  const now = Date.now
+  let clock = Date.parse('2030-01-02T11:59:59Z')
+  Date.now = () => clock
+  process.env.STREAK_REWARD_DAYS = '1'
+  calls = []
+  entitlement = parseEther('100')
+  try {
+    const beforeReset = await daily.runDaily(await users.getUserById(user.id))
+    assert.equal(beforeReset.claimed, parseEther('100'))
+    assert.equal(beforeReset.reward, parseEther('500'))
+    clock = Date.parse('2030-01-02T12:00:00Z')
+    const afterReset = await daily.runDaily(await users.getUserById(user.id))
+    assert.equal(afterReset.claimed, parseEther('100'))
+    assert.equal(afterReset.streak, beforeReset.streak, 'two periods on one Lagos day count as one streak day')
+    assert.equal(afterReset.reward, 0n, 'no second streak reward on the same Lagos date')
+    const claims = calls.filter(c => c.id.startsWith('keyless-claim:'))
+    assert.equal(claims.length, 2)
+    assert.notEqual(claims[0].id, claims[1].id)
+    clock = Date.parse('2030-01-02T23:00:00Z') // January 3 in Lagos, same UBI period
+    const midnight = await daily.runDaily(await users.getUserById(user.id))
+    assert.equal(midnight.claimStatus, 'already_claimed')
+    assert.equal(midnight.claimed, 0n)
+    assert.equal(midnight.reward, 0n)
+    assert.equal(calls.filter(c => c.id.startsWith('keyless-claim:')).length, 2)
+  } finally { Date.now = now; delete process.env.STREAK_REWARD_DAYS }
+})
+
+test('an old signed calendar-day claim is recovered under its original ID after the period changes', async () => {
+  const daily = require('../src/lib/daily.ts')
+  const now = Date.now
+  Date.now = () => Date.parse('2030-01-04T14:00:00Z')
+  const id = `keyless-claim:${user.id}:2030-01-03`
+  const hash = `0x${'c'.repeat(64)}`
+  submitted.add(id)
+  entitlement = 0n
+  calls = []
+  try {
+    await run("UPDATE chain_transactions SET status = 'confirmed' WHERE id = ?", [`reward:${user.id}:old-signed-reward`])
+    await run("INSERT INTO chain_transactions (id, sender, intent, raw, hash, created_at) VALUES (?, ?, '{}', '0x', ?, 0)", [id, chain.treasuryAddress().toLowerCase(), hash])
+    const recovered = await daily.runDaily(await users.getUserById(user.id))
+    assert.equal(recovered.claimed, parseEther('100'))
+    assert.deepEqual(calls.filter(c => c.id.startsWith('keyless-claim:')).map(c => c.id), [id])
+    assert.equal((await run('SELECT 1 FROM activity WHERE operation_id = ?', [id.slice(8)])).rows.length, 1)
+    calls = []
+    await daily.runDaily(await users.getUserById(user.id))
+    assert.equal(calls.filter(c => c.id.startsWith('keyless-claim:')).length, 0, 'receipt is recorded once, even while its journal still says pending')
+  } finally { Date.now = now; entitlement = parseEther('100') }
+})
+
+test('a confirmed receipt with no G$ does not advance the streak or earn a reward', async () => {
+  const daily = require('../src/lib/daily.ts')
+  const now = Date.now, originalClaim = claimers.claimViaContract
+  Date.now = () => Date.parse('2030-01-05T14:00:00Z')
+  claimers.claimViaContract = async () => ({ hash: `0x${'d'.repeat(64)}`, amount: 0n, feeWei: 0n })
+  const before = await users.getUserById(user.id)
+  process.env.STREAK_REWARD_DAYS = '1'
+  try {
+    const result = await daily.runDaily(before)
+    assert.equal(result.claimStatus, 'not_available')
+    assert.equal(result.reward, 0n)
+    const after = await users.getUserById(user.id)
+    assert.equal(after.streak, before.streak)
+    assert.equal(after.lastClaimDay, before.lastClaimDay)
+  } finally { Date.now = now; claimers.claimViaContract = originalClaim; delete process.env.STREAK_REWARD_DAYS }
+})
+
+test('a broken wallet link does not prevent the sweep from checking the next user', async () => {
+  const daily = require('../src/lib/daily.ts')
+  const list = users.listConnectedUsers
+  process.env.CLAIMER_FACTORY_ADDRESS = factory
+  let broken = await users.createUser()
+  delete process.env.CLAIMER_FACTORY_ADDRESS
+  await users.updateUser(broken.id, { connected: true, rootAddress: `0x${'9'.repeat(40)}` })
+  broken = await users.getUserById(broken.id)
+  users.listConnectedUsers = async () => [broken, await users.getUserById(user.id)]
+  try {
+    const results = await daily.runDailyForAll(async () => {})
+    assert.equal(results[0].ok, false)
+    assert.equal(results[0].claimStatus, 'reconnect')
+    assert.equal(results[1].ok, true)
+  } finally { users.listConnectedUsers = list }
 })
 
 after(async () => { global.fetch = originalFetch; (await db()).close(); rmSync(directory, { recursive: true, force: true }) })

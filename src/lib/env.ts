@@ -192,7 +192,7 @@ export function demoFundsAllowed(): boolean {
 export function assertSafeRuntime() {
   const cfg = serverConfig()
   if (cfg.moneyProblem) throw new Error(cfg.moneyProblem)
-  if (cfg.chain.mode === 'mock' && (falconKeyLive() || (vtpassLive() && cfg.vtpass.apiKey) || cfg.chain.treasuryKey || process.env.TELEMETRY_REPORTER_KEY)) {
+  if (cfg.chain.mode === 'mock' && (falconKeyLive() || (vtpassLive() && cfg.vtpass.apiKey) || cfg.chain.treasuryKey || process.env.TELEMETRY_REPORTER_KEY || process.env.DAILY_CHALLENGE_SIGNER_KEY)) {
     throw new Error('Demo deployments must not contain live provider or treasury signing credentials.')
   }
   if (cfg.chain.mode === 'celo' && cfg.custody.provider === 'local' && !/^[0-9a-f]{64}$/i.test(cfg.walletSecret)) {

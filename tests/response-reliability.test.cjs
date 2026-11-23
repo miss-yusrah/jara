@@ -225,4 +225,46 @@ test('streamed AI answers disable hidden reasoning so answer tokens can arrive i
   } finally { global.fetch = originalFetch; if (previousModel === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = previousModel }
 })
 
+test('claim API and chat preserve unavailable and low-gas messages instead of claiming success', async () => {
+  const daily = require('../src/lib/daily.ts')
+  const claimRoute = require('../src/app/api/claim/route.ts')
+  const user = await fixture()
+  const originals = { runDaily: daily.runDaily, requireUser: session.requireUser, userState: shared.userState, reachable: llm.llmReachable }
+  llm.llmReachable = async () => { throw new Error('Explicit claims must not depend on an AI service') }
+  session.requireUser = async () => user
+  shared.userState = async () => ({})
+  try {
+    for (const [claimStatus, message] of [['not_available', 'No G$ is available to claim right now. I’ll check again automatically.'], ['gas_low', 'Your Jara wallet needs a little CELO. Open your profile and tap Add gas.']]) {
+      daily.runDaily = async () => ({ claimed: 0n, reward: 0n, streak: 0, paid: [], message, claimMessage: message, claimStatus })
+      const response = await claimRoute.POST()
+      assert.equal(response.status, 200)
+      const body = await response.json()
+      assert.equal(body.message, message)
+      assert.equal(body.claimStatus, claimStatus)
+      const reply = await agent.handleMessage(user.id, 'claim my G$', `claim-status-${claimStatus}`)
+      assert.equal(reply.text, message)
+    }
+  } finally { daily.runDaily = originals.runDaily; session.requireUser = originals.requireUser; shared.userState = originals.userState; llm.llmReachable = originals.reachable }
+})
+
+test('model-initiated claims return the confirmed tool outcome without an AI rewrite', async () => {
+  const daily = require('../src/lib/daily.ts')
+  const user = await fixture()
+  const originals = { runDaily: daily.runDaily, chat: llm.chat, reachable: llm.llmReachable }
+  const message = 'No G$ is available to claim right now. I’ll check again automatically.'
+  let calls = 0
+  llm.llmReachable = async () => true
+  daily.runDaily = async () => ({ claimed: 0n, reward: 0n, streak: 0, paid: [], message, claimMessage: message, claimStatus: 'not_available' })
+  llm.chat = async () => {
+    calls++
+    return { role: 'assistant', content: null, tool_calls: [{ id: 'claim-tool', type: 'function', function: { name: 'claim_now', arguments: '{}' } }] }
+  }
+  try {
+    for (const text of ["Don't claim my G$", 'Why did my claim fail?', 'Claim G$ and buy airtime']) assert.equal(directIntent(text), null)
+    const reply = await agent.handleMessage(user.id, 'Help me collect today’s payout please', 'model-claim-outcome')
+    assert.equal(reply.text, message)
+    assert.equal(calls, 1)
+  } finally { daily.runDaily = originals.runDaily; llm.chat = originals.chat; llm.llmReachable = originals.reachable }
+})
+
 after(async () => { (await db()).close(); rmSync(directory, { recursive: true, force: true }) })

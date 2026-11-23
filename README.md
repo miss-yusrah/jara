@@ -127,6 +127,8 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=$APP_URL/ap
 ## GoodBuilders metrics
 `GET /api/stats` returns users, connected users, claims, bills paid and rewards, with G$ volume for each.
 
+Daily Jara adds a separate, user-submitted activity streak and a daily draw for five ₦1,000 airtime prizes. It stays inactive until a funded entry contract is configured. See the [campaign deployment, draw and delivery runbook](docs/daily-challenge.md). Operators manage draws and record manual airtime delivery at `/admin/challenges`; the feature never charges a user's G$ for entry or prizes.
+
 ## Contracts (Celo mainnet, from `@goodsdks/citizen-sdk`)
 | | |
 |---|---|

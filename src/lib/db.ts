@@ -7,6 +7,21 @@ import { serverConfig } from './env'
 // SQLite locally (file:data/jara.db), Turso/libSQL in production.
 // G$ amounts are stored as wei strings (18 decimals on Celo).
 const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS daily_challenge_attempts (
+    contract TEXT NOT NULL, root TEXT NOT NULL, day INTEGER NOT NULL,
+    answers TEXT NOT NULL, reviewed_at INTEGER, created_at INTEGER NOT NULL,
+    PRIMARY KEY (contract, root, day)
+  )`,
+  `CREATE TABLE IF NOT EXISTS daily_challenge_draws (
+    contract TEXT NOT NULL, day INTEGER NOT NULL, seed TEXT NOT NULL,
+    participants TEXT NOT NULL, block_number TEXT NOT NULL, block_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL, PRIMARY KEY (contract, day)
+  )`,
+  `CREATE TABLE IF NOT EXISTS daily_challenge_winners (
+    contract TEXT NOT NULL, day INTEGER NOT NULL, root TEXT NOT NULL, rank INTEGER NOT NULL,
+    phone TEXT, network TEXT, recipient_at INTEGER, delivery_ref TEXT, delivered_at INTEGER,
+    PRIMARY KEY (contract, day, root), UNIQUE (contract, day, rank)
+  )`,
   `CREATE TABLE IF NOT EXISTS referral_budget (id TEXT PRIMARY KEY, amount_gd INTEGER NOT NULL, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS exam_attempts (
     run_id INTEGER PRIMARY KEY REFERENCES ai_runs(id), user_id TEXT NOT NULL REFERENCES users(id),

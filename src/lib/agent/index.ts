@@ -339,6 +339,7 @@ async function applyJarChange(user: User, change: JarChange): Promise<string> {
 }
 
 type ToolOut = {
+  claimMessage?: string
   confirm?: ConfirmCard
   /** What to say alongside the confirm card. */
   prompt?: string
@@ -391,7 +392,8 @@ async function runTool(user: User, name: string, args: Record<string, unknown>, 
       const fresh = (await getUserById(user.id))!
       if (!fresh.connected) return 'error: user has not connected their GoodDollar account yet; tell them to finish setup in the app'
       const r = await runDaily(fresh)
-      return r.claimed > 0n ? r.message : 'already claimed today; next claim tomorrow'
+      out.claimMessage = r.message
+      return r.message
     }
     case 'ai_helpers':
       return JSON.stringify(Object.entries(AI_TOOLS).map(([id, t]) => ({ id, name: t.name, price_gd: t.priceGd, what: t.blurb })))
@@ -657,6 +659,9 @@ async function llmRespond(user: User, text: string, snap: Snapshot): Promise<Age
     }
     // The confirmation text comes from the server's own record of the request, never from the model.
     if (out.confirm) return { text: out.prompt ?? `I'll pay ${out.confirm.summary} with G$ ${out.confirm.gd} from your jar. Confirm?`, confirm: out.confirm, extra: out.extra, engine }
+    // Claim outcomes are authoritative. Do not let a later model response turn
+    // an empty check into “claimed”, invent an expiry, or postpone retries.
+    if (out.claimMessage) return { text: results.join('\n\n'), extra: out.extra, engine }
   }
   return { text: results.join('\n\n') || 'Please try asking that again.', confirm: out.confirm, extra: out.extra, engine }
 }
