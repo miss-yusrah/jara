@@ -13,6 +13,7 @@ import {
   isAddress,
   type Address,
   type Hash,
+  type Hex,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { celo } from 'viem/chains'
@@ -243,6 +244,50 @@ export async function topUpFromFaucet(address: Address): Promise<boolean> {
     data: encodeFunctionData({ abi: faucetAbi, functionName: 'topWallet', args: [address] }),
   })
   return (await pc.getBalance({ address })) >= needed
+}
+
+/** Most CELO Jara sends for one sponsored call. A council vote (~310k gas)
+ * needs ~0.15 CELO up front at ~240 gwei and spends ~0.06 of it. */
+export const SPONSORED_CALL_CAP = parseEther('0.25')
+
+/**
+ * Jara pays for one specific transaction the person must send from their own
+ * wallet (a council vote can't be relayed: it counts msg.sender). Estimates that
+ * exact call, then tops the wallet up to cover it: GoodDollar's free faucet first,
+ * the treasury for the rest. The treasury transfer is durable under
+ * `gas:<operationId>`, so a retried request never pays twice.
+ * Returns false when the wallet already had enough.
+ */
+export async function sponsorWalletCall(address: Address, call: { to: Address; data: Hex }, operationId: string): Promise<boolean> {
+  if (isMock()) return false
+  if (!serverConfig().chain.treasuryKey) throw new Error('Jara can’t cover network fees on this deployment.')
+  const pc = publicClient()
+  const [gas, perGas] = await Promise.all([pc.estimateGas({ account: address, to: call.to, data: call.data }), feePerGas()])
+  // Wallets require gasLimit × maxFee up front and set gasLimit ~1.5× the
+  // estimate, so cover 2×. Any unspent CELO stays in the person's wallet.
+  const needed = gas * perGas * 2n
+  const enough = async () => (await pc.getBalance({ address })) >= needed
+  if (await enough()) return false
+  const id = `gas:${operationId}`
+  const saved = (await run('SELECT intent FROM chain_transactions WHERE id = ?', [id])).rows[0]
+  if (!saved) {
+    try {
+      if (await pc.readContract({ address: GD.faucet, abi: faucetAbi, functionName: 'canTop', args: [address] })) {
+        await durableTransaction(`faucet:${operationId}`, treasuryKey(), { to: GD.faucet, data: encodeFunctionData({ abi: faucetAbi, functionName: 'topWallet', args: [address] }) })
+        if (await enough()) return true
+      }
+    } catch (err) {
+      const pending = (await run("SELECT 1 FROM chain_transactions WHERE id = ? AND status = 'pending'", [`faucet:${operationId}`])).rows[0]
+      if (pending) throw err
+      console.warn('[chain] faucet top-up failed', err instanceof Error ? err.name : 'error')
+    }
+  }
+  const balance = await pc.getBalance({ address })
+  if (!saved && balance >= needed) return true
+  const value = saved ? BigInt(JSON.parse(String(saved.intent)).value) : needed - balance
+  if (value > SPONSORED_CALL_CAP) throw new Error('Celo network fees are unusually high right now. Please try again later.')
+  await durableTransaction(id, treasuryKey(), { to: address, value })
+  return true
 }
 
 /** True if the agent wallet can pay for a transaction (topping up from the faucet if possible). */

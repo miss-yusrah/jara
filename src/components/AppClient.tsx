@@ -15,6 +15,7 @@ import { spendingPolicyAbi } from '@/lib/spending-policy'
 import { useSheetDialog } from './useSheetDialog'
 import { DashboardNav, dashboardView, type DashboardView } from './DashboardNav'
 import { DailyChallenge } from './DailyChallenge'
+import { FlowVote } from './FlowVote'
 import type { ClaimHealth } from '@/lib/claim-health'
 import { faceVerificationLink, requestAddress, walletErrorMessage } from '@/lib/wallet-connect'
 import { cancelConnect, getWalletProvider, prewarmWallet, resumeWallet, switchWallet } from '@/lib/web3auth'
@@ -847,6 +848,7 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
         </div>
 
         <div hidden={tab !== 'overview' && tab !== 'rewards'} className="max-w-3xl"><DailyChallenge rootAddress={state.user.rootAddress} /></div>
+        {!mock && state.user.connected && state.user.rootAddress && <div hidden={tab !== 'overview' && tab !== 'rewards'} className="max-w-3xl"><FlowVote key={state.user.rootAddress} rootAddress={state.user.rootAddress} /></div>}
         {!mock && <div hidden={tab !== 'overview' && tab !== 'automations'} className="mb-6 max-w-3xl"><ClaimHealthCard state={state} setState={setState} flash={flash} /></div>}
         <div hidden={tab !== 'overview'}>
           <div className="overview-grid">
