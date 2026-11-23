@@ -135,18 +135,27 @@ export async function ubiClaimPeriod() {
 const identityExpiryAbi = parseAbi([
   'function lastAuthenticated(address account) view returns (uint256)',
   'function authenticationPeriod() view returns (uint256)',
+  'function reverifyDaysOptions(uint256) view returns (uint32)',
+  'function identities(address) view returns (uint256 dateAuthenticated, uint256 dateAdded, string did, uint256 whitelistedOnChainId, uint8 status, uint8 authCount)',
 ])
 
 /** When the user's GoodDollar face verification expires (ms), or null if unknown. Claims stop after this. */
 export async function verificationExpiresAt(root: Address): Promise<number | null> {
   if (isMock()) return null
   const pc = publicClient()
-  const [last, periodDays] = await Promise.all([
+  const [last, period, identity] = await Promise.all([
     pc.readContract({ address: GD.identity, abi: identityExpiryAbi, functionName: 'lastAuthenticated', args: [root] }),
     pc.readContract({ address: GD.identity, abi: identityExpiryAbi, functionName: 'authenticationPeriod' }),
+    pc.readContract({ address: GD.identity, abi: identityExpiryAbi, functionName: 'identities', args: [root] }),
   ])
   if (last === 0n) return null
-  return Number(last + periodDays * 86_400n) * 1000
+  // IdentityV4 shortens early windows: a first face check must be redone after
+  // reverifyDaysOptions[0] (3) days, then [1] (180). Past the list it uses the period.
+  const authCount = BigInt(identity[5])
+  const days = await pc
+    .readContract({ address: GD.identity, abi: identityExpiryAbi, functionName: 'reverifyDaysOptions', args: [authCount] })
+    .then((d) => BigInt(d), () => period)
+  return Number(last + days * 86_400n) * 1000
 }
 
 /** True if `signature` over `message` was made by `address`. Also handles smart-contract wallets (ERC-1271). */

@@ -336,14 +336,14 @@ export async function verificationReminder(user: User, jobs: AgentJobs): Promise
     return {
       lane: 'save',
       text: 'Your GoodDollar face check has expired, so daily claims are paused',
-      message: '⚠️ Your GoodDollar face check has expired, so I can’t claim your daily G$ for now. Open GoodWallet (wallet.gooddollar.org) and verify your face again. It takes a minute, and I’ll start claiming again right after.',
+      message: `⚠️ Your GoodDollar face check has expired, so I can’t claim your daily G$ for now. Renew it here with your same wallet:\n${serverConfig().appUrl}/app#automations\n\nPlease don’t verify in a new GoodWallet: a new wallet gets rejected as a duplicate face. It takes a minute, and I’ll start claiming again right after.`,
     }
   }
   const days = Math.max(1, Math.ceil(left / DAY))
   return {
     lane: 'save',
     text: `Your GoodDollar face check expires in ${days} day${days === 1 ? '' : 's'} (${when})`,
-    message: `⏰ Heads up: your GoodDollar face check expires in ${days} day${days === 1 ? '' : 's'} (${when}). After that I can’t claim your daily G$. Open GoodWallet (wallet.gooddollar.org) and verify again before then, so nothing stops.`,
+    message: `⏰ Heads up: your GoodDollar face check expires in ${days} day${days === 1 ? '' : 's'} (${when}). After that I can’t claim your daily G$. Renew it here with your same wallet before then, so nothing stops:\n${serverConfig().appUrl}/app#automations`,
   }
 }
 

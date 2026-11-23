@@ -9,6 +9,7 @@ import { createPublicClient, createWalletClient, custom, encodeFunctionData, for
 import { celo } from 'viem/chains'
 import { getWalletProvider, prewarmWallet } from '@/lib/web3auth'
 import { walletErrorMessage } from '@/lib/wallet-connect'
+import { RenewVerificationButton } from './RenewVerification'
 import {
   FLOW_ABI, FLOW_CHAIN, FLOW_COUNCIL, FLOW_URL, PROJECT_NAME,
   buildFlowVote, flowAllocation, flowClaimMessage, flowSnapshotKey, matchesFlowVoteTransaction, readFlowSnapshot,
@@ -281,6 +282,7 @@ export function FlowVote({ rootAddress }: { rootAddress: string }) {
             <p className="text-sm text-ink/70">
               Your GoodDollar verification for {short(address)} needs renewing before you can vote. Renew it with this same wallet, not a new one.
             </p>
+            <RenewVerificationButton rootAddress={address} />
             <button className="app-button-secondary justify-self-start" disabled={!!busy} onClick={() => run('Refreshing…', async () => void (await refresh()))}>I’ve renewed · check again</button>
           </>
         ) : !s.recipientActive ? (

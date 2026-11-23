@@ -16,6 +16,7 @@ import { useSheetDialog } from './useSheetDialog'
 import { DashboardNav, dashboardView, type DashboardView } from './DashboardNav'
 import { DailyChallenge } from './DailyChallenge'
 import { FlowVote } from './FlowVote'
+import { RenewVerificationButton } from './RenewVerification'
 import type { ClaimHealth } from '@/lib/claim-health'
 import { faceVerificationLink, requestAddress, walletErrorMessage } from '@/lib/wallet-connect'
 import { cancelConnect, getWalletProvider, prewarmWallet, resumeWallet, switchWallet } from '@/lib/web3auth'
@@ -458,7 +459,7 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
     const sp = new URLSearchParams(window.location.search)
     if (sp.has('fv')) {
       window.history.replaceState(null, '', '/app')
-      flash('Welcome back! Connect the same wallet again to finish.')
+      flash(sp.get('fv') === 'renew' ? 'Welcome back! GoodDollar can take a few minutes to confirm your renewal.' : 'Welcome back! Connect the same wallet again to finish.')
     }
   }, [flash])
 
@@ -1219,7 +1220,7 @@ function ClaimHealthCard({ state, setState, flash }: { state: State; setState: (
     {health?.nextPeriodAt && <p className="mt-2 text-xs text-ink/60">Next claim period: {new Intl.DateTimeFormat('en-NG', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' }).format(health.nextPeriodAt)} (Lagos)</p>}
     <div className="mt-3 flex flex-wrap items-center gap-3">
       {health?.status === 'reconnect' && <WalletActionButton disabled={busy} label={busy ? 'Finish in your wallet…' : 'Reconnect daily claims'} onProvider={reconnect} onError={(err) => setError(walletErrorMessage(err))} />}
-      {health?.status === 'verify' && <a href="https://wallet.gooddollar.org" target="_blank" rel="noopener noreferrer" className="app-button bg-forest text-cream">Renew GoodDollar verification</a>}
+      {health?.status === 'verify' && state.user.rootAddress && <RenewVerificationButton rootAddress={state.user.rootAddress} />}
       {health?.status === 'ready' && <button className="app-button bg-forest text-cream" disabled={busy} onClick={async () => {
         setBusy(true); setError(null)
         try {
@@ -1920,7 +1921,7 @@ function AgentJobs({ state, setState, flash }: { state: State; setState: (s: Sta
     days === null
       ? 'I’ll warn you a week before your GoodDollar face check expires.'
       : days <= 0
-        ? 'Your GoodDollar face check has expired. Re-verify in GoodWallet so I can claim again.'
+        ? 'Your GoodDollar face check has expired. Renew it here with your same wallet so I can claim again.'
         : `Face check valid for ${days} more day${days === 1 ? '' : 's'}. I’ll warn you a week before it runs out.`
 
   const row = (on: boolean) => `grid h-8 w-8 shrink-0 place-items-center rounded-full ${on ? 'bg-forest text-cream' : 'bg-[#f4f5ef] ring-1 ring-ink/10'}`
@@ -2010,6 +2011,7 @@ function AgentJobs({ state, setState, flash }: { state: State; setState: (s: Sta
           <div className="min-w-0 flex-1">
             <p className="font-bold">Verification reminder <span className="text-sm font-bold text-forest">· free, always on</span></p>
             <p className="text-sm font-semibold text-ink/55">{verifyLine}</p>
+            {days !== null && days <= 7 && state.user.rootAddress && <RenewVerificationButton rootAddress={state.user.rootAddress} label={days <= 0 ? 'Renew verification now' : 'Renew verification early'} />}
           </div>
         </li>
       </ul>
