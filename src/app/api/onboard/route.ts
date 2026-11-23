@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { getAddress, isAddress } from 'viem'
-import { topUpFromFaucet, whitelistedRoot } from '@/lib/chain'
+import { encodeFunctionData, getAddress, isAddress, parseAbi } from 'viem'
+import { GD, sponsorWalletCall, topUpFromFaucet, whitelistedRoot } from '@/lib/chain'
 import { serverConfig } from '@/lib/env'
 import { runDaily } from '@/lib/daily'
 import { requireUser } from '@/lib/session'
@@ -12,6 +12,8 @@ import { WALLET_LINKED_MESSAGE, accountForWallet, bindWallet } from '@/lib/walle
 import { activateClaimer, prepareClaimer } from '@/lib/claimers'
 
 export const dynamic = 'force-dynamic'
+
+const CONNECT_ABI = parseAbi(['function connectAccount(address account)'])
 
 // Step 1: user tells us their verified GoodDollar address.
 // Step 2: they connect our agent wallet to it (connectAccount, signed in their wallet).
@@ -33,7 +35,22 @@ async function post(req: Request) {
     let fresh = (await getUserById(user.id))!
 
     if (body.action === 'prepare-claimer') {
-      try { return NextResponse.json(await userState(await prepareClaimer(fresh))) }
+      try {
+        const prepared = await prepareClaimer(fresh)
+        // New wallets have no CELO, and the faucet doesn't always top them up, so
+        // linking stuck on "Waiting for approval". Cover this one link: faucet
+        // first, then a capped treasury top-up, once per wallet and contract.
+        if (!mock && prepared.rootAddress && prepared.claimerAddress) {
+          const root = getAddress(prepared.rootAddress)
+          const claimer = getAddress(prepared.claimerAddress)
+          if ((await whitelistedRoot(claimer))?.toLowerCase() !== root.toLowerCase()) {
+            const data = encodeFunctionData({ abi: CONNECT_ABI, functionName: 'connectAccount', args: [claimer] })
+            await sponsorWalletCall(root, { to: GD.identity, data }, `link:${root.toLowerCase()}:${claimer.toLowerCase()}`)
+              .catch((err) => console.warn('[onboard] link fee not covered', err instanceof Error ? err.message : err))
+          }
+        }
+        return NextResponse.json(await userState(prepared))
+      }
       catch (err) { return bad(err instanceof Error ? err.message : 'Could not prepare the claim contract.') }
     }
 

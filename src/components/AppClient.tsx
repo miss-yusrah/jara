@@ -125,14 +125,21 @@ async function setSpendingLimit(provider: EIP1193Provider, spender: string, gd: 
   return { account, hash }
 }
 
+/** A wallet request that never answers (closed modal, expired session) must not leave the button spinning. */
+function walletStep<T>(promise: Promise<T>, what: string, ms = 120_000): Promise<T> {
+  return Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Your wallet didn’t answer while ${what}. Tap Approve to try again.`)), ms))])
+}
+
 async function linkClaimContract(provider: EIP1193Provider, state: State, status: (s: string) => void): Promise<State> {
+  status('Preparing your claim contract and network fee…')
   const prepared = await api<State>('/api/onboard', { action: 'prepare-claimer' })
   if (!prepared.user.claimerAddress) throw new Error('Your claim contract is not ready yet.')
   const wallet = createWalletClient({ chain: celo, transport: custom(provider) })
   const rpc = createPublicClient({ chain: celo, transport: http() })
-  const [account] = await wallet.requestAddresses()
+  status('Opening your wallet…')
+  const [account] = await walletStep(wallet.requestAddresses(), 'opening')
   if (account.toLowerCase() !== state.user.rootAddress?.toLowerCase()) throw new Error('Switch to your verified GoodDollar wallet to upgrade.')
-  await wallet.switchChain({ id: celo.id }).catch(() => wallet.addChain({ chain: celo }))
+  await walletStep(wallet.switchChain({ id: celo.id }).catch(() => wallet.addChain({ chain: celo })), 'switching to Celo')
   if (prepared.config.treasury) {
     const allowanceAbi = [{ type: 'function', name: 'allowance', stateMutability: 'view', inputs: [{ type: 'address', name: 'owner' }, { type: 'address', name: 'spender' }], outputs: [{ type: 'uint256' }] }] as const
     const oldAllowance = await rpc.readContract({ address: GD_TOKEN, abi: allowanceAbi, functionName: 'allowance', args: [account, prepared.config.treasury as `0x${string}`] })
@@ -142,7 +149,10 @@ async function linkClaimContract(provider: EIP1193Provider, state: State, status
     }
   }
   const send = async (functionName: 'connectAccount' | 'disconnectAccount', address: string) => {
-    const hash = await wallet.writeContract({ account, address: IDENTITY, abi: CONNECT_ABI, functionName, args: [address as `0x${string}`] })
+    if ((await rpc.getBalance({ address: account })) === 0n)
+      throw new Error('Your wallet has no CELO for the network fee yet, and Jara couldn’t add it just now. Wait a minute, then tap Approve again.')
+    const hash = await walletStep(wallet.writeContract({ account, address: IDENTITY, abi: CONNECT_ABI, functionName, args: [address as `0x${string}`] }), 'approving the link')
+    status('Approved. Waiting for Celo to confirm…')
     const receipt = await rpc.waitForTransactionReceipt({ hash, timeout: 90_000 })
     if (receipt.status !== 'success') throw new Error('The wallet transaction failed. Try the upgrade again.')
   }
@@ -161,7 +171,8 @@ async function linkClaimContract(provider: EIP1193Provider, state: State, status
   }
   status('Sign to finish linking this Jara account…')
   const issuedAt = Date.now()
-  const signature = await wallet.signMessage({ account, message: walletClaimerMessage(prepared.user.id, account, prepared.user.claimerAddress, issuedAt) })
+  const signature = await walletStep(wallet.signMessage({ account, message: walletClaimerMessage(prepared.user.id, account, prepared.user.claimerAddress, issuedAt) }), 'signing')
+  status('Finishing setup and making your first claim…')
   // The wallet work is done; do not make the owner sign again because the account was briefly
   // busy. Finishing is idempotent, and this signature stays valid for five minutes.
   for (let attempt = 0; ; attempt++) {
@@ -451,6 +462,8 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
   const [active, setActive] = useState<{ name: string; provider: EIP1193Provider } | null>(startWallet ? { name: 'your wallet', provider: startWallet } : null)
   // Set when the address they gave isn't a verified GoodDollar identity.
   const [unverified, setUnverified] = useState<{ address: string; fromWallet: boolean } | null>(null)
+  // What the Approve step is doing right now, shown on the button.
+  const [stage, setStage] = useState<string | null>(null)
   // Set when this wallet already belongs to another Jara account (new phone, cleared browser).
   const [linked, setLinked] = useState<string | null>(null)
   const step = state.user.rootAddress ? 2 : 1
@@ -519,7 +532,8 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
         return
       }
       if (state.config.keylessAvailable || state.user.claimerAddress) {
-        setState(await linkClaimContract(provider, state, flash))
+        try { setState(await linkClaimContract(provider, state, setStage)) }
+        finally { setStage(null) }
         flash('Daily claims now go directly to your own wallet.')
         return
       }
@@ -709,7 +723,7 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
                 disabled={!!busy}
                 className="app-button justify-center bg-forest text-cream hover:bg-forest-soft disabled:opacity-60 min-h-12 text-sm"
               >
-                {busy === 'approve' ? 'Waiting for approval…' : `Approve in ${active.name}`}
+                {busy === 'approve' ? stage ?? 'Waiting for approval…' : `Approve in ${active.name}`}
               </button>
             ) : (
               connectButton(busy === 'wallet' ? 'Connecting…' : 'Connect wallet to approve', () =>

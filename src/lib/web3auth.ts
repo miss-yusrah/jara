@@ -182,6 +182,21 @@ export async function resumeWallet(): Promise<EIP1193Provider | null> {
   return w3a?.connected && w3a.provider ? (w3a.provider as EIP1193Provider) : null
 }
 
+/** The already signed-in wallet, without ever opening the login modal. */
+export async function connectedWallet(): Promise<EIP1193Provider | null> {
+  const own = injected()
+  if (own && isMiniPay()) return own
+  if (!CLIENT_ID) return null
+  const w3a = await getWeb3Auth().catch(() => null)
+  return w3a?.connected && w3a.provider ? (w3a.provider as EIP1193Provider) : null
+}
+
+/** In-app browsers (Telegram, Instagram, Facebook…) often block the camera and Google sign-in. */
+export function isInAppBrowser() {
+  if (typeof navigator === 'undefined') return false
+  return /Telegram|Instagram|FBAN|FBAV|FB_IAB|Line\/|; wv\)|WhatsApp|Snapchat|TikTok|musical_ly/i.test(navigator.userAgent) || typeof (window as unknown as { TelegramWebviewProxy?: unknown }).TelegramWebviewProxy !== 'undefined'
+}
+
 /** Sign out of Web3Auth so the next Connect can pick a different wallet or login. */
 export async function switchWallet() {
   if (isMiniPay() || !CLIENT_ID) return

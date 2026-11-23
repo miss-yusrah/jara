@@ -83,10 +83,10 @@ export function FlowVote({ rootAddress }: { rootAddress: string }) {
     setSnapshot(state)
     setReview(null)
     const allocation = flowAllocation(state)
-    // New voters start at the full 10 community votes (or whatever is left beside
-    // their other allocations); people who already voted see their current choice.
+    // Everyone starts at the full 10 community votes (or whatever is left beside
+    // their other allocations), including people who gave Jara fewer before.
     const start = allocation.maximum < DEFAULT_VOTES ? allocation.maximum : DEFAULT_VOTES
-    setAmount(allocation.current > 0n ? String(allocation.current) : start > 0n ? String(start) : '')
+    setAmount(start > 0n ? String(start) : '')
     return state
   }, [readSnapshot])
 
@@ -316,7 +316,11 @@ export function FlowVote({ rootAddress }: { rootAddress: string }) {
               />
             </label>
             <button className="app-button bg-forest text-cream disabled:opacity-60" disabled={!!busy || !amount} onClick={prepare}>Review vote</button>
-            <p className="w-full text-xs text-ink/55">Set to your full {String(allocation?.maximum ?? DEFAULT_VOTES)} votes. You can lower it before you confirm.</p>
+            <p className="w-full text-xs text-ink/55">
+              {allocation && allocation.current > 0n && allocation.current >= allocation.maximum
+                ? `You already give Jara all ${String(allocation.current)} of your votes. Thank you!`
+                : `${allocation && allocation.current > 0n ? `You give Jara ${String(allocation.current)} now. ` : ''}Set to your full ${String(allocation?.maximum ?? DEFAULT_VOTES)} votes. You can lower it before you confirm.`}
+            </p>
           </div>
         ) : null}
 
