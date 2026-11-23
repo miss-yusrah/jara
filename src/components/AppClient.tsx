@@ -16,6 +16,7 @@ import { useSheetDialog } from './useSheetDialog'
 import { DashboardNav, dashboardView, type DashboardView } from './DashboardNav'
 import { DailyChallenge } from './DailyChallenge'
 import { FlowVote } from './FlowVote'
+import { fvReturn } from '@/lib/fv-return'
 import { RenewVerificationButton } from './RenewVerification'
 import type { ClaimHealth } from '@/lib/claim-health'
 import { faceVerificationLink, requestAddress, walletErrorMessage } from '@/lib/wallet-connect'
@@ -231,10 +232,18 @@ export function AppClient({ tgCode, refCode }: { tgCode?: string; refCode?: stri
     setState(null)
   }, [])
 
-  const flash = useCallback((t: string) => {
+  const flash = useCallback((t: string, ms = 3500) => {
     setToast(t)
-    window.setTimeout(() => setToast(null), 3500)
+    window.setTimeout(() => setToast(null), ms)
   }, [])
+
+  // Back from GoodDollar's face check: say what actually happened.
+  useEffect(() => {
+    const result = fvReturn(new URLSearchParams(window.location.search))
+    if (!result) return
+    window.history.replaceState(null, '', '/app' + window.location.hash)
+    queueMicrotask(() => flash(result.message, result.ok ? 6000 : 20000))
+  }, [flash])
 
   useEffect(() => {
     ;(async () => {
@@ -467,14 +476,6 @@ function Onboarding({ state, setState, flash, startWallet }: { state: State; set
   // Set when this wallet already belongs to another Jara account (new phone, cleared browser).
   const [linked, setLinked] = useState<string | null>(null)
   const step = state.user.rootAddress ? 2 : 1
-
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search)
-    if (sp.has('fv')) {
-      window.history.replaceState(null, '', '/app')
-      flash(sp.get('fv') === 'renew' ? 'Welcome back! GoodDollar can take a few minutes to confirm your renewal.' : 'Welcome back! Connect the same wallet again to finish.')
-    }
-  }, [flash])
 
   const act = async (label: string, fn: () => Promise<void>) => {
     setBusy(label)

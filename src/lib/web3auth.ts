@@ -191,10 +191,22 @@ export async function connectedWallet(): Promise<EIP1193Provider | null> {
   return w3a?.connected && w3a.provider ? (w3a.provider as EIP1193Provider) : null
 }
 
-/** In-app browsers (Telegram, Instagram, Facebook…) often block the camera and Google sign-in. */
-export function isInAppBrowser() {
-  if (typeof navigator === 'undefined') return false
-  return /Telegram|Instagram|FBAN|FBAV|FB_IAB|Line\/|; wv\)|WhatsApp|Snapchat|TikTok|musical_ly/i.test(navigator.userAgent) || typeof (window as unknown as { TelegramWebviewProxy?: unknown }).TelegramWebviewProxy !== 'undefined'
+/**
+ * Why GoodDollar's face check won't run in this browser, or null. Mirrors
+ * goodid.gooddollar.org: on iPhone only Safari works (Chrome and every in-app
+ * browser are refused); on Android, in-app browsers and webviews are refused.
+ */
+export function faceCheckBrowserProblem(): string | null {
+  if (typeof navigator === 'undefined') return null
+  if (isMiniPay()) return null
+  const ua = navigator.userAgent
+  const inApp = /Telegram|Instagram|FBAN|FBAV|FB_IAB|Line\/|WhatsApp|Snapchat|TikTok|musical_ly|; wv\)/i.test(ua)
+    || typeof (window as unknown as { TelegramWebviewProxy?: unknown }).TelegramWebviewProxy !== 'undefined'
+  const iOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+  if (iOS && (inApp || /CriOS|FxiOS|EdgiOS|OPiOS|GSA\//.test(ua) || !/Safari\//.test(ua)))
+    return 'On iPhone the face check only works in Safari. Tap the share icon or ⋯ and choose “Open in Safari”, sign in the same way as before, then renew there.'
+  if (inApp) return 'The face check can’t use your camera inside this app’s browser. Tap ⋮ and choose “Open in Chrome”, sign in the same way as before, then renew there.'
+  return null
 }
 
 /** Sign out of Web3Auth so the next Connect can pick a different wallet or login. */

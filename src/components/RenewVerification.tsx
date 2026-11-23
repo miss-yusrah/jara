@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { EIP1193Provider } from 'viem'
-import { connectedWallet, getWalletProvider, isInAppBrowser, isMobileBrowser, prewarmWallet } from '@/lib/web3auth'
+import { connectedWallet, faceCheckBrowserProblem, getWalletProvider, prewarmWallet } from '@/lib/web3auth'
 import { faceVerificationLink, requestAddress, walletErrorMessage } from '@/lib/wallet-connect'
 
 // Phones sign in by leaving Jara and coming back; this remembers a renewal in progress.
@@ -18,7 +18,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 export function RenewVerificationButton({ rootAddress, label = 'Renew GoodDollar verification', className }: { rootAddress: string; label?: string; className?: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [inApp, setInApp] = useState(false)
+  const [browserProblem, setBrowserProblem] = useState<string | null>(null)
 
   const go = async (provider: EIP1193Provider) => {
     const account = await requestAddress(provider)
@@ -39,7 +39,7 @@ export function RenewVerificationButton({ rootAddress, label = 'Renew GoodDollar
   useEffect(() => {
     let pending = false
     try { pending = window.sessionStorage.getItem(PENDING_KEY) === rootAddress.toLowerCase() } catch { /* private browsing */ }
-    queueMicrotask(() => setInApp(isMobileBrowser() && isInAppBrowser()))
+    queueMicrotask(() => setBrowserProblem(faceCheckBrowserProblem()))
     if (!pending) return
     // Claim it now: the button shows on more than one card, and only one may continue.
     try { window.sessionStorage.removeItem(PENDING_KEY) } catch { /* private browsing */ }
@@ -71,11 +71,7 @@ export function RenewVerificationButton({ rootAddress, label = 'Renew GoodDollar
         className={className ?? 'app-button justify-self-start bg-forest text-cream hover:bg-forest-soft disabled:opacity-60'}>
         {busy ? 'Opening the face check…' : label}
       </button>
-      {inApp && (
-        <span className="text-sm text-mandarin">
-          The face check needs your camera, and this in-app browser may block it. Tap ⋮ or the share icon and choose “Open in Chrome” or “Open in Safari”, then renew there.
-        </span>
-      )}
+      {browserProblem && <span className="text-sm text-mandarin">{browserProblem}</span>}
       {error && <span role="alert" className="text-sm text-mandarin">{error}</span>}
     </span>
   )
