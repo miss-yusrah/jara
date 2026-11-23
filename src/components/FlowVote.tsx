@@ -19,6 +19,8 @@ type Pending = { hash: Hash; amount: string }
 // covered: Jara tops the wallet up for this vote just before it is sent.
 type Review = { snapshotKey: string; amount: string; votes: Ballot[]; fee: string; covered: boolean }
 
+/** GoodDollar community members get 10 votes; give Jara all of them by default. */
+const DEFAULT_VOTES = 10n
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`
 const pendingKey = (address: Address) => `jara:flow-vote:${FLOW_CHAIN}:${FLOW_COUNCIL}:${address.toLowerCase()}`
 const publicClient = createPublicClient({ chain: celo, transport: http() })
@@ -80,7 +82,10 @@ export function FlowVote({ rootAddress }: { rootAddress: string }) {
     setSnapshot(state)
     setReview(null)
     const allocation = flowAllocation(state)
-    setAmount(allocation.current > 0n ? String(allocation.current) : allocation.maximum > 0n ? String(allocation.maximum) : '')
+    // New voters start at the full 10 community votes (or whatever is left beside
+    // their other allocations); people who already voted see their current choice.
+    const start = allocation.maximum < DEFAULT_VOTES ? allocation.maximum : DEFAULT_VOTES
+    setAmount(allocation.current > 0n ? String(allocation.current) : start > 0n ? String(start) : '')
     return state
   }, [readSnapshot])
 
@@ -309,6 +314,7 @@ export function FlowVote({ rootAddress }: { rootAddress: string }) {
               />
             </label>
             <button className="app-button bg-forest text-cream disabled:opacity-60" disabled={!!busy || !amount} onClick={prepare}>Review vote</button>
+            <p className="w-full text-xs text-ink/55">Set to your full {String(allocation?.maximum ?? DEFAULT_VOTES)} votes. You can lower it before you confirm.</p>
           </div>
         ) : null}
 
