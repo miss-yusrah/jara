@@ -1,5 +1,5 @@
-// Flowstate / GoodBuilders council voting for Jara. Adapted from
-// github.com/Calebux/flowstate-vote-kit to Jara's own wallet layer (no wagmi).
+// Flowstate / GoodBuilders council voting for Jara. Built on
+// Jara's own wallet layer (no wagmi).
 import { decodeFunctionData, parseAbi, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 
 // Jara's recipient in the council, lowercase, as listed by

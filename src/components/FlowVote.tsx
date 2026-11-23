@@ -1,8 +1,7 @@
 'use client'
 
 // Vote for Jara in the GoodBuilders Flow Council without leaving the app.
-// Adapted from github.com/Calebux/flowstate-vote-kit: the kit's wagmi hook is
-// replaced with Jara's own wallet layer (Web3Auth, MiniPay or an external
+// Built on Jara's own wallet layer (Web3Auth, MiniPay or an external
 // wallet), and every write is locked to the person's verified GoodDollar wallet.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPublicClient, createWalletClient, custom, encodeFunctionData, formatEther, http, type Address, type EIP1193Provider, type Hash } from 'viem'
