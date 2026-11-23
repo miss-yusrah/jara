@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { fromThisSite } from '@/lib/same-site'
 import { createPublicClient, encodeFunctionData, http, type Address } from 'viem'
 import { celo } from 'viem/chains'
 import { sponsorWalletCall } from '@/lib/chain'
@@ -25,8 +26,7 @@ const reply = (body: unknown, status = 200) => NextResponse.json(body, { status,
  * wallet just enough for that exact ballot. Never sends to any other address.
  */
 export async function POST(req: NextRequest) {
-  const origin = req.headers.get('origin')
-  if (req.headers.get('x-flow-vote') !== '1' || (origin && origin !== req.nextUrl.origin))
+  if (req.headers.get('x-flow-vote') !== '1' || !fromThisSite(req))
     return reply({ error: 'Requests must come from this site.' }, 403)
   const user = await requireUser()
   if (user instanceof NextResponse) return user

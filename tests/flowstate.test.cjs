@@ -72,3 +72,17 @@ test('council details are refused if Jara’s pinned listing changes name', asyn
   name = 'Someone Else'
   assert.equal((await route.GET()).status, 503)
 })
+
+test('behind the production proxy, Jara’s own pages pass and other sites are refused', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ success: true }))
+  process.env.APP_URL = 'https://usejara.xyz'
+  // What the proxy hands Next: the internal address, plus the public host.
+  const viaProxy = (origin) => route.POST(new NextRequest('http://localhost:3400/api/flowstate', {
+    method: 'POST',
+    headers: { 'x-flow-vote': '1', 'content-type': 'application/json', origin, host: 'usejara.xyz', 'x-forwarded-proto': 'https' },
+    body: JSON.stringify({}),
+  }))
+  assert.equal((await viaProxy('https://usejara.xyz')).status, 400) // past the site check, to the body check
+  assert.equal((await viaProxy('https://evil.example')).status, 403)
+  delete process.env.APP_URL
+})

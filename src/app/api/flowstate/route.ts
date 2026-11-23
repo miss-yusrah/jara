@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { fromThisSite } from '@/lib/same-site'
 import { isAddress, verifyMessage } from 'viem'
 import { FLOW_CHAIN, FLOW_COUNCIL, FLOW_QUERY, PROJECT_NAME, PROJECT_RECIPIENT, flowClaimMessage, normalizeName } from '@/lib/flowstate'
 
@@ -48,9 +49,8 @@ export async function GET() {
 /** Relays the person's own council-bound claim signature to Flowstate. No
  * signer, treasury key, credential or general-purpose proxy is involved. */
 export async function POST(req: NextRequest) {
-  const origin = req.headers.get('origin')
   // Same-origin only, plus a custom header a cross-site form cannot send.
-  if (req.headers.get('x-flow-vote') !== '1' || (origin && origin !== req.nextUrl.origin))
+  if (req.headers.get('x-flow-vote') !== '1' || !fromThisSite(req))
     return reply({ error: 'Requests must come from this site.' }, 403)
   try {
     const reader = req.body?.getReader()
