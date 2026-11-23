@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Icon, type IconName } from './Icon'
 
-export type DashboardView = 'overview' | 'automations' | 'rewards' | 'chat' | 'guide'
+export type DashboardView = 'overview' | 'automations' | 'rewards' | 'chat' | 'guide' | 'vote'
 
 const items: { id: DashboardView; label: string; icon: IconName }[] = [
   { id: 'overview', label: 'Overview', icon: 'chart' },
@@ -15,7 +15,7 @@ const items: { id: DashboardView; label: string; icon: IconName }[] = [
 export function dashboardView(): DashboardView {
   if (typeof window === 'undefined') return 'overview'
   const hash = window.location.hash.slice(1)
-  return [...items.map((item) => item.id), 'guide'].includes(hash) ? hash as DashboardView : 'overview'
+  return [...items.map((item) => item.id), 'guide', 'vote'].includes(hash) ? hash as DashboardView : 'overview'
 }
 
 export function DashboardNav({ active, onSelect, onWallet }: { active: DashboardView; onSelect: (view: DashboardView) => void; onWallet: () => void }) {
@@ -40,6 +40,7 @@ export function DashboardNav({ active, onSelect, onWallet }: { active: Dashboard
         <Link href="/app/exam" className="dashboard-nav-item"><Icon name="star" className="h-5 w-5" strokeWidth={1.8} /> Exam prep <span className="ml-auto text-xs">↗</span></Link>
         <button onClick={onWallet} className="dashboard-nav-item"><Icon name="coins" className="h-5 w-5" strokeWidth={1.8} /> Your wallet</button>
         <a href="#guide" onClick={(event) => { event.preventDefault(); onSelect('guide') }} aria-current={active === 'guide' ? 'page' : undefined} className={`dashboard-nav-item ${active === 'guide' ? 'is-active' : ''}`}><Icon name="sun" className="h-5 w-5" strokeWidth={1.8} /> Getting started</a>
+        <a href="#vote" onClick={(event) => { event.preventDefault(); onSelect('vote') }} aria-current={active === 'vote' ? 'page' : undefined} className={`dashboard-nav-item ${active === 'vote' ? 'is-active' : ''}`}><Icon name="check" className="h-5 w-5" strokeWidth={1.8} /> Vote for Jara</a>
       </div>
       <div className="mt-auto hidden px-3 pt-16 lg:block">
         <div className="mb-3 flex items-center gap-2 text-sm font-bold text-forest"><span className="h-2 w-2 rounded-full bg-forest" /> A little, every day.</div>

@@ -831,7 +831,9 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
     rewards: { title: 'Small habits. Extra G$.', description: 'Keep showing up. Jara collects the rewards you qualify for.' },
     chat: { title: 'A little help from Jara.', description: 'Ask about your money, check your jars, or plan your next payment.' },
     guide: { title: 'Make yourself at home.', description: 'A few simple steps to get more from your GoodDollar.' },
+    vote: { title: 'Back Jara on Flowstate.', description: 'Use your GoodBuilders community votes to support Jara. It’s free: Jara covers the network fee.' },
   }
+  const canVote = !mock && state.user.connected && Boolean(state.user.rootAddress)
 
   return (
     <div className="dashboard-shell">
@@ -839,7 +841,7 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
       <main id="dashboard-content" className="dashboard-main">
         <div className="dashboard-heading">
           <div>
-            <p className="mb-2 text-[11px] font-bold tracking-[0.16em] text-forest/60 uppercase">{tab === 'overview' ? 'Your everyday, a little easier' : tab === 'chat' ? 'Ask Jara' : tab === 'guide' ? 'Getting started' : tab}</p>
+            <p className="mb-2 text-[11px] font-bold tracking-[0.16em] text-forest/60 uppercase">{tab === 'overview' ? 'Your everyday, a little easier' : tab === 'chat' ? 'Ask Jara' : tab === 'guide' ? 'Getting started' : tab === 'vote' ? 'Support Jara' : tab}</p>
             <h1 className="text-[28px] leading-tight font-bold tracking-[-0.045em] sm:text-[34px]">{headings[tab].title}</h1>
             <p className="mt-2 text-sm leading-relaxed text-ink/55">{headings[tab].description}</p>
           </div>
@@ -847,9 +849,8 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
           <div className="hidden items-center gap-2 rounded-full border border-ink/10 bg-white px-3.5 py-2 text-xs font-semibold lg:flex"><Icon name="flame" className="h-4 w-4 text-mandarin" /> {state.user.streak}-day claim streak</div>
         </div>
 
-        <div hidden={tab !== 'overview' && tab !== 'rewards'} className="max-w-3xl"><DailyChallenge rootAddress={state.user.rootAddress} /></div>
-        {!mock && state.user.connected && state.user.rootAddress && <div hidden={tab !== 'overview' && tab !== 'rewards'} className="max-w-3xl"><FlowVote key={state.user.rootAddress} rootAddress={state.user.rootAddress} /></div>}
-        {!mock && <div hidden={tab !== 'overview' && tab !== 'automations'} className="mb-6 max-w-3xl"><ClaimHealthCard state={state} setState={setState} flash={flash} /></div>}
+        <div hidden={tab !== 'rewards'} className="max-w-3xl"><DailyChallenge rootAddress={state.user.rootAddress} /></div>
+        {!mock && <div hidden={tab !== 'automations'} className="mb-6 max-w-3xl"><ClaimHealthCard state={state} setState={setState} flash={flash} /></div>}
         <div hidden={tab !== 'overview'}>
           <div className="overview-grid">
             <div className="grid min-w-0 content-start gap-6">
@@ -874,6 +875,13 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
                 <p className="mt-2 text-sm leading-relaxed text-ink/55">“What’s in my jars?” is a good place to start.</p>
                 <button onClick={() => navigate('chat')} className="mt-3 inline-flex min-h-9 items-center gap-2 text-sm font-bold text-forest">Ask Jara <Icon name="arrow" className="h-4 w-4" /></button>
               </div>
+              {canVote && (
+                <div className="rounded-2xl border border-forest/15 bg-white p-5">
+                  <div className="flex items-center gap-2 text-sm font-bold text-forest"><Icon name="check" className="h-4 w-4" /> Support Jara</div>
+                  <p className="mt-2 text-sm leading-relaxed text-ink/55">Vote for Jara in the GoodBuilders council. Free: Jara covers the fee.</p>
+                  <button onClick={() => navigate('vote')} className="mt-3 inline-flex min-h-9 items-center gap-2 text-sm font-bold text-forest">Vote now <Icon name="arrow" className="h-4 w-4" /></button>
+                </div>
+              )}
               {state.user.hasPending && <button onClick={() => navigate('chat')} className="app-card p-5 text-left text-sm font-bold text-forest">You have a request to review →</button>}
             </aside>
           </div>
@@ -886,6 +894,9 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
         </div>
         <div hidden={tab !== 'rewards'} className="max-w-3xl"><RewardsCard state={state} flash={flash} /></div>
         <div hidden={tab !== 'chat'} className="mx-auto max-w-3xl"><Chat state={state} setState={setState} flash={flash} /></div>
+        {tab === 'vote' && (canVote
+          ? <div className="max-w-3xl"><FlowVote key={state.user.rootAddress!} rootAddress={state.user.rootAddress!} /></div>
+          : <div className="app-card max-w-3xl p-6 text-sm text-ink/65">Connect your verified GoodDollar account to vote for Jara.</div>)}
         <div hidden={tab !== 'guide'} className="max-w-3xl"><GettingStarted state={state} setState={setState} flash={flash} onPay={state.config.billsLive ? () => setPaying(true) : undefined} /></div>
 
       {mock && <DemoControls run={run} setState={setState} rate={snap.ngnPerGd} onRunAgent={runAgent} />}
