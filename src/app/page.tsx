@@ -16,7 +16,7 @@ const WEEK = [
 ] as const
 
 const JOBS = [
-  { n: '01', t: 'Saves', d: 'Claims your G$ every day and splits it into budgets for light, data and airtime.', c: 'jar-budget-light' },
+  { n: '01', t: 'Saves', d: 'Claims your G$ every day and puts it straight into your airtime budget.', c: 'jar-budget-light' },
   { n: '02', t: 'Pays', d: 'Knows when each bill comes round, makes sure the budget is ready and pays, then sends proof.', c: 'jar-budget-data' },
   { n: '03', t: 'Finds rewards', d: 'Streaks, first bills, invites, weekly saving: Jara spots G$ bonuses and collects them.', c: 'jar-budget-airtime' },
   { n: '04', t: 'Powers your AI', d: 'Your G$ pays for AI help: research, assignments, brainstorming, exam practice, CVs and more.', c: 'jar-budget-ai' },

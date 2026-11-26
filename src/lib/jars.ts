@@ -122,8 +122,8 @@ export function jarDueAt(j: Pick<Jar, 'everyDays' | 'lastPaidAt'>): number | nul
 }
 
 /**
- * Reconcile jars with the on-chain balance. New G$ (claims, deposits) is shared
- * between jars that are below target, in proportion to what each still needs.
+ * Reconcile jars with the on-chain balance. New G$ (claims, deposits) fills
+ * the airtime jar up to its target; the rest stays free.
  * Returns the amount of new G$ that was allocated.
  */
 export async function syncJars(user: User): Promise<bigint> {
@@ -146,24 +146,15 @@ export async function syncJars(user: User): Promise<bigint> {
 
     const free = balance - allocated
     if (free === 0n) return 0n
-    const needs = await Promise.all(
-      jars.map(async (j) => {
-        const target = await gdForNgn(j.targetNgn)
-        return target > j.balanceWei ? target - j.balanceWei : 0n
-      }),
-    )
-    const totalNeed = needs.reduce((s, n) => s + n, 0n)
-    if (totalNeed === 0n) return 0n
-    const pool = free < totalNeed ? free : totalNeed
-    let given = 0n
-    await atomic(async (tx) => {
-      for (let i = 0; i < jars.length; i++) {
-        const share = i === jars.length - 1 ? pool - given : (pool * needs[i]) / totalNeed
-        const capped = share > needs[i] ? needs[i] : share
-        given += capped
-        await tx.execute({ sql: 'UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', args: [String(jars[i].balanceWei + capped), user.id, jars[i].kind] })
-      }
-    })
+    // New G$ (claims, deposits) goes straight to the airtime jar, up to its
+    // target. Anything beyond that stays free; light, data and AI are only
+    // filled when the person moves G$ there themselves.
+    const airtime = jars.find((j) => j.kind === 'airtime')!
+    const target = await gdForNgn(airtime.targetNgn)
+    const need = target > airtime.balanceWei ? target - airtime.balanceWei : 0n
+    const given = free < need ? free : need
+    if (given === 0n) return 0n
+    await run('UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', [String(airtime.balanceWei + given), user.id, 'airtime'])
     return given
   })
 }
