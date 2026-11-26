@@ -6,7 +6,7 @@ Jara is an AI agent for everyday life, built for **GoodBuilders Season 5** (Good
 
 Jara quietly handles four everyday jobs, and **G$ drives all of them**:
 
-- **Saves.** Claims your daily GoodDollar UBI and puts it in the Airtime jar (Light, Data and AI jars fill when you move G$ there).
+- **Saves.** Claims your daily GoodDollar UBI and puts all of it in the Airtime jar (Light, Data and AI jars fill when you move G$ there).
 - **Pays.** Learns how often each bill comes round, tops the jar up before it's due, then pays Nigerian airtime, data or prepaid electricity on time.
 - **Finds rewards.** Spots and collects G$ bonuses: streaks, first bill, weekly saver, invites, first gig.
 - **Powers your AI.** The G$ you gather pays for AI helpers: research briefs, assignment help (understand and outline it, not ghost-write it), brainstorming, exam practice (WAEC/JAMB/NECO), CV and cover letter, an opportunity scout, side-hustle plans and a content writer. Each use moves G$ from your **AI jar** to the treasury on Celo, and the treasury pays for the AntSeed inference. You're only charged when an answer comes back.
@@ -16,7 +16,7 @@ The agent runs on its own schedule (`/api/cron/daily`, every few hours) and send
 ## How it works
 
 1. **One-time link.** The user's face-verified GoodDollar wallet calls `IdentityV4.connectAccount(jarAddress)`. With `CLAIMER_FACTORY_ADDRESS` configured, the linked address is an immutable claim contract owned by that root wallet. New accounts have no agent key. Existing users upgrade from their profile and retain access to old wallet funds and keys (see [Safety model](#safety-model)). Connected accounts share the identity's single daily claim, so the jar wallet can claim UBI itself.
-2. **Daily cron** (`/api/cron/daily`). For upgraded users, Jara pays gas to call the claim contract, which atomically forwards all G$ to the owner. Legacy users still call `UBIScheme.claim()` from their agent wallet. Jara puts the new G$ in the Airtime jar up to its target (the rest stays free), gives a streak bonus every 7 days, and auto-pays any jar that has reached its target. It then sends a morning message on Telegram.
+2. **Daily cron** (`/api/cron/daily`). For upgraded users, Jara pays gas to call the claim contract, which atomically forwards all G$ to the owner. Legacy users still call `UBIScheme.claim()` from their agent wallet. Jara puts all the new G$ in the Airtime jar, gives a streak bonus every 7 days, and auto-pays any jar that has reached its target. It then sends a morning message on Telegram.
 3. **Paying a bill.** One funding wallet pays the treasury on Celo: for upgraded users, the verified personal wallet through `JaraSpending` within its owner-set daily/total limits and expiry. Legacy users can still pay from the Jara-managed wallet or a direct personal-wallet allowance. A purchase is never split between both. The configured provider then delivers the bill. A confirmed failure refunds the original funding wallet.
 4. **The agent brain.** An OpenAI-compatible tool-calling loop pointed at the **AntSeed** buyer proxy (`localhost:8377`), which pays per call in USDC on Base. If AntSeed isn't reachable, a built-in rule parser takes over, so the bot never goes silent.
 

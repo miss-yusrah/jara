@@ -122,8 +122,8 @@ export function jarDueAt(j: Pick<Jar, 'everyDays' | 'lastPaidAt'>): number | nul
 }
 
 /**
- * Reconcile jars with the on-chain balance. New G$ (claims, deposits) fills
- * the airtime jar up to its target; the rest stays free.
+ * Reconcile jars with the on-chain balance. All new G$ (claims, deposits) goes
+ * to the airtime jar.
  * Returns the amount of new G$ that was allocated.
  */
 export async function syncJars(user: User): Promise<bigint> {
@@ -146,15 +146,11 @@ export async function syncJars(user: User): Promise<bigint> {
 
     const free = balance - allocated
     if (free === 0n) return 0n
-    // New G$ (claims, deposits) goes straight to the airtime jar, up to its
-    // target. Anything beyond that stays free; light, data and AI are only
-    // filled when the person moves G$ there themselves.
+    // All new G$ (claims, deposits) goes straight to the airtime jar, with no
+    // cap. Light, data and AI are only filled when the person moves G$ there.
     const airtime = jars.find((j) => j.kind === 'airtime')!
-    const target = await gdForNgn(airtime.targetNgn)
-    const need = target > airtime.balanceWei ? target - airtime.balanceWei : 0n
-    const given = free < need ? free : need
-    if (given === 0n) return 0n
-    await run('UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', [String(airtime.balanceWei + given), user.id, 'airtime'])
+    await run('UPDATE jars SET balance_wei = ? WHERE user_id = ? AND kind = ?', [String(airtime.balanceWei + free), user.id, 'airtime'])
+    const given = free
     return given
   })
 }
