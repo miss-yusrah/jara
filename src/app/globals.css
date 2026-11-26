@@ -64,6 +64,8 @@ body { background: var(--color-cream); color: var(--color-ink); }
 .dashboard-nav-item { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 12px; border-radius: 12px; font-size: 13px; font-weight: 600; color: #0b1f1699; transition: background 150ms, color 150ms; }
 .dashboard-nav-item:hover { background: #eaf0e4; color: #0f3d2a; }
 .dashboard-nav-item.is-active { background: #e5eddc; color: #0f3d2a; font-weight: 700; }
+/* The phone bottom bar shows a different set of items than the desktop sidebar. */
+.dashboard-nav-item.nav-phone-only { display: none; }
 .dashboard-main { min-width: 0; padding: 34px 40px 60px; }
 .dashboard-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 28px; }
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 24px; align-items: start; }
@@ -99,8 +101,10 @@ body { background: var(--color-cream); color: var(--color-ink); }
 @media (max-width: 1023px) {
   .dashboard-shell { display: block; }
   .dashboard-sidebar { position: fixed; inset: auto 0 0; z-index: 40; min-height: 0; padding: 8px 12px max(8px, env(safe-area-inset-bottom)); border: 0; border-top: 1px solid #0b1f161a; background: #fcfcf8f5; backdrop-filter: blur(14px); }
-  .dashboard-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0; }
+  .dashboard-nav { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; margin: 0; }
   .dashboard-nav-item { flex-direction: column; justify-content: center; gap: 5px; min-height: 52px; padding: 7px 3px; font-size: 11px; }
+  .dashboard-nav-item.nav-phone-only { display: flex; }
+  .dashboard-nav-item.nav-desktop-only { display: none; }
   .dashboard-main { padding: 26px 24px 110px; }
   .overview-grid { grid-template-columns: minmax(0, 1fr) 260px; }
 }

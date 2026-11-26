@@ -17,6 +17,7 @@ export type IconName =
   | 'arrow'
   | 'alert'
   | 'coins'
+  | 'menu'
 
 const PATHS: Record<IconName, React.ReactNode> = {
   jar: (
@@ -53,6 +54,7 @@ const PATHS: Record<IconName, React.ReactNode> = {
   ),
   plus: <path d="M12 5v14M5 12h14" />,
   undo: <path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />,
+  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   arrow: <path d="M4 12h15M13 6l6 6-6 6" />,
   alert: <path d="M12 8v5M12 16.5v.5M10.3 3.9 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />,
   coins: (
