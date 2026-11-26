@@ -8,13 +8,13 @@ import { DEFAULT_LIMIT_GD } from '@/lib/spend'
 import { snapshot } from '@/lib/jars'
 import { botLink } from '@/lib/telegram'
 import { AI_TOOLS, listAiRuns } from '@/lib/ai-tools'
-import { rewardProgress } from '@/lib/rewards'
+import { listReferrals, rewardProgress } from '@/lib/rewards'
 import { DRILL_PRICE_GD, EXAMS, SCOUT_PRICE_GD, daysUntil, getJobs, verificationStatus } from '@/lib/agent/jobs'
 import { listActivity, type User, ensureRefCode } from '@/lib/users'
 
 export async function userState(user: User) {
   const cfg = serverConfig()
-  const [snap, activity, messages, llmUp, aiRuns, rewards, jobs, verification, confirm] = await Promise.all([
+  const [snap, activity, messages, llmUp, aiRuns, rewards, jobs, verification, confirm, referrals] = await Promise.all([
     snapshot(user),
     listActivity(user.id, 30),
     listMessages(user.id),
@@ -24,6 +24,7 @@ export async function userState(user: User) {
     getJobs(user.id),
     verificationStatus(user),
     pendingConfirm(user),
+    listReferrals(user),
   ])
   return {
     user: {
@@ -48,6 +49,7 @@ export async function userState(user: User) {
     aiRuns,
     aiTools: Object.entries(AI_TOOLS).map(([id, t]) => ({ id, name: t.name, blurb: t.blurb, priceGd: t.priceGd, placeholder: t.placeholder })),
     rewards,
+    referrals,
     jobs: {
       exam: {
         on: jobs.examOn,

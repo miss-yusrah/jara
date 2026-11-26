@@ -166,6 +166,29 @@ export async function collectRewards(user: User): Promise<{ title: string; amoun
   })
 }
 
+export type Referral = { name: string; joinedAt: number; status: 'joined' | 'verified' | 'rewarded' }
+
+/**
+ * Who joined with this person's invite link, newest first. Names only, never wallets.
+ * joined: has an account, not set up yet. verified: set up with a verified GoodDollar
+ * identity, reward on its way (Jara collects it on the next hourly run, budget allowing).
+ * rewarded: the G$ 1,000 was paid.
+ */
+export async function listReferrals(user: User): Promise<Referral[]> {
+  const rows = (await run(
+    `SELECT id, name, created_at, connected, root_address FROM users WHERE referred_by = ? ORDER BY created_at DESC, id LIMIT 100`,
+    [user.id],
+  )).rows
+  if (!rows.length) return []
+  const paid = await alreadyPaid(user.id)
+  return rows.map((x) => {
+    const root = x.root_address ? String(x.root_address).toLowerCase() : null
+    const rewarded = Boolean(root && paid.has(referralKey(root))) || paid.has(`referral-${String(x.id)}`)
+    const status: Referral['status'] = rewarded ? 'rewarded' : Number(x.connected) === 1 && root ? 'verified' : 'joined'
+    return { name: (x.name as string | null)?.trim() || 'A friend', joinedAt: Number(x.created_at), status }
+  })
+}
+
 /** What the user is close to earning, for the dashboard. */
 export async function rewardProgress(user: User) {
   const paid = await alreadyPaid(user.id)

@@ -74,6 +74,7 @@ interface State {
   aiRuns: { id: number; tool: string; input: string; output: string; costGd: number; demo: boolean; createdAt: number }[]
   aiTools: { id: string; name: string; blurb: string; priceGd: number; placeholder: string }[]
   rewards: { earnedGd: number; items: { title: string; detail: string; amountGd: number; done: boolean; progress: number }[] }
+  referrals: { name: string; joinedAt: number; status: 'joined' | 'verified' | 'rewarded' }[]
   jobs: {
     exam: { on: boolean; exam: string | null; subjects: string[]; date: string | null; daysLeft: number | null; drillsDone: number; priceGd: number; options: string[] }
     scout: { on: boolean; interests: string | null; lastAt: number | null; priceGd: number }
@@ -337,7 +338,25 @@ function Loading() {
 
 // ---------- welcome ----------
 
-function Welcome({ onStart, refCode }: { onStart: (s: State, provider: EIP1193Provider | null) => void; refCode?: string }) {
+const REF_KEY = 'jara:ref'
+
+/** The invite code this person arrived with, kept across the phone sign-in round trip. */
+function useInviteCode(fromUrl?: string): string | undefined {
+  const [code, setCode] = useState(fromUrl)
+  useEffect(() => {
+    try {
+      if (fromUrl) window.localStorage.setItem(REF_KEY, fromUrl)
+      else {
+        const saved = window.localStorage.getItem(REF_KEY)
+        if (saved) queueMicrotask(() => setCode(saved))
+      }
+    } catch { /* private browsing */ }
+  }, [fromUrl])
+  return code
+}
+
+function Welcome({ onStart, refCode: refFromUrl }: { onStart: (s: State, provider: EIP1193Provider | null) => void; refCode?: string }) {
+  const refCode = useInviteCode(refFromUrl)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState<'wallet' | 'name' | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -435,7 +454,11 @@ function Welcome({ onStart, refCode }: { onStart: (s: State, provider: EIP1193Pr
               event.preventDefault()
               setBusy('name')
               setError(null)
-              try { onStart(await api<State>('/api/session', { name, ref: refCode }), fresh.provider) }
+              try {
+                const started = await api<State>('/api/session', { name, ref: refCode })
+                try { window.localStorage.removeItem(REF_KEY) } catch { /* private browsing */ }
+                onStart(started, fresh.provider)
+              }
               catch (err) { setError(err instanceof Error ? err.message : 'Could not get started. Please try again.') }
               finally { setBusy(null) }
             }}>
@@ -2076,7 +2099,42 @@ function RewardsCard({ state, flash }: { state: State; flash: (t: string) => voi
       >
         Copy my invite link
       </button>
+      <Referrals list={state.referrals ?? []} />
     </section>
+  )
+}
+
+const REFERRAL_STATUS = {
+  joined: { text: 'Joined · needs to finish setup', tone: 'text-ink/50' },
+  verified: { text: 'Verified · reward on its way', tone: 'text-mandarin' },
+  rewarded: { text: `+G$ ${gdFmt(1000)} paid`, tone: 'text-forest' },
+} as const
+
+function Referrals({ list }: { list: State['referrals'] }) {
+  const paid = list.filter((r) => r.status === 'rewarded').length
+  return (
+    <div className="mt-5 border-t border-ink/10 pt-4">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="font-bold">People you invited</h3>
+        <span className="text-sm font-bold text-ink/55">{list.length} joined · {paid} rewarded</span>
+      </div>
+      {list.length === 0 ? (
+        <p className="mt-2 text-sm text-ink/55">No one yet. When a friend opens your link and signs up, they show here.</p>
+      ) : (
+        <ul className="mt-3 grid gap-2">
+          {list.map((r, i) => (
+            <li key={`${r.joinedAt}-${i}`} className="flex items-center justify-between gap-3 rounded-xl bg-[#f4f5ef] px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold">{r.name}</p>
+                <p className="text-xs text-ink/45">{new Date(r.joinedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+              </div>
+              <span className={`shrink-0 text-xs font-bold ${REFERRAL_STATUS[r.status].tone}`}>{REFERRAL_STATUS[r.status].text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {list.some((r) => r.status === 'joined') && <p className="mt-2 text-xs text-ink/50">A friend counts once they verify on GoodDollar and finish setting up Jara.</p>}
+    </div>
   )
 }
 
