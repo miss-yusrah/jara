@@ -359,6 +359,19 @@ export async function gdAllowance(owner: Address, blockNumber?: bigint, policy =
   return retryBlockRead(() => publicClient().readContract({ address: GD.token, abi: erc20Abi, functionName: 'allowance', args: [owner, treasuryAddress()], blockNumber }))
 }
 
+/** The whole limit left under a spending policy, ignoring how much of it today allows. */
+export async function policyTotalLeft(owner: Address): Promise<bigint> {
+  if (isMock()) return 0n
+  const address = serverConfig().chain.spendingContract
+  if (!address) return 0n
+  const [[remaining, , validUntil], allowance] = await Promise.all([
+    retryBlockRead(() => publicClient().readContract({ address: address as Address, abi: spendingPolicyAbi, functionName: 'policies', args: [owner] })),
+    retryBlockRead(() => publicClient().readContract({ address: GD.token, abi: erc20Abi, functionName: 'allowance', args: [owner, address as Address] })),
+  ])
+  if (BigInt(Math.floor(Date.now() / 1000)) >= validUntil) return 0n
+  return remaining < allowance ? remaining : allowance
+}
+
 /** Pull G$ from the person's own wallet into the treasury, within the limit they approved. */
 export async function pullGdFromWallet(from: Address, amount: bigint, operationId: string, policy = false): Promise<{ hash: Hash; feeWei: bigint }> {
   if (isMock()) throw new Error('Spending from your own wallet is not available in demo mode')

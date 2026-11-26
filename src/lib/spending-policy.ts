@@ -6,8 +6,8 @@ export const spendingPolicyAbi = parseAbi([
   'function operator() view returns (address)',
   'function recipient() view returns (address)',
   'function available(address owner) view returns (uint256)',
+  'function policies(address owner) view returns (uint256 remaining, uint256 dailyLimit, uint256 validUntil, uint256 day, uint256 spent)',
   'function configure(uint256 total, uint256 dailyLimit, uint256 validUntil)',
   'function charge(address owner, uint256 amount, bytes32 id)',
 ])
-export const POLICY_DAILY_GD = 1000
 export const POLICY_DAYS = 30

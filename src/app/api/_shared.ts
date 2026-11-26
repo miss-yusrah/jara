@@ -3,7 +3,7 @@ import { listMessages, pendingConfirm } from '@/lib/agent'
 import { llmReachable } from '@/lib/agent/llm'
 import { serverConfig } from '@/lib/env'
 import { treasuryAddress } from '@/lib/chain'
-import { POLICY_DAILY_GD, POLICY_DAYS } from '@/lib/spending-policy'
+import { POLICY_DAYS } from '@/lib/spending-policy'
 import { DEFAULT_LIMIT_GD } from '@/lib/spend'
 import { snapshot } from '@/lib/jars'
 import { botLink } from '@/lib/telegram'
@@ -74,7 +74,6 @@ export async function userState(user: User) {
       chainMode: cfg.chain.mode,
       keylessAvailable: Boolean(cfg.chain.claimerFactory),
       spendingContract: cfg.chain.spendingContract || null,
-      dailyLimitGd: POLICY_DAILY_GD,
       policyDays: POLICY_DAYS,
       provider: cfg.provider,
       billsLive: cfg.billsLive,

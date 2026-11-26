@@ -80,10 +80,10 @@ interface State {
     scout: { on: boolean; interests: string | null; lastAt: number | null; priceGd: number }
     verification: { expiresAt: number | null; daysLeft: number | null }
   }
-  snapshot: { jars: JarView[]; totalGd: number; freeGd: number; freeNgn: number; ngnPerGd: number; walletGd: number | null; gas: { celo: number; perTxCelo: number } | null; mode: 'wallet' | 'jar'; claimedGd: number; limitLeftGd: number; feesOwedGd: number }
+  snapshot: { jars: JarView[]; totalGd: number; freeGd: number; freeNgn: number; ngnPerGd: number; walletGd: number | null; gas: { celo: number; perTxCelo: number } | null; mode: 'wallet' | 'jar'; claimedGd: number; limitLeftGd: number; limitTotalGd: number; feesOwedGd: number }
   activity: Activity[]
   messages: Msg[]
-  config: { chainMode: 'celo' | 'mock'; keylessAvailable: boolean; spendingContract: string | null; dailyLimitGd: number; policyDays: number; provider: string; billsLive: boolean; llm: string; treasury: string | null; limitGd: number }
+  config: { chainMode: 'celo' | 'mock'; keylessAvailable: boolean; spendingContract: string | null; policyDays: number; provider: string; billsLive: boolean; llm: string; treasury: string | null; limitGd: number }
 }
 
 const JAR_COLOR: Record<JarView['kind'], JarColor> = { light: 'crest', data: 'mandarin', airtime: 'forest', ai: 'mandarin' }
@@ -104,7 +104,7 @@ const APPROVE_ABI = [
 /** A bill, or an action the assistant asked for, waiting for the user's confirmation. */
 type ConfirmCard = { id: string; summary: string; gd: number; title?: string; action?: string }
 
-async function setSpendingLimit(provider: EIP1193Provider, spender: string, gd: number, expectedOwner?: string, policy?: { dailyGd: number; days: number }) {
+async function setSpendingLimit(provider: EIP1193Provider, spender: string, gd: number, expectedOwner?: string, policy?: { days: number }) {
   const wallet = createWalletClient({ chain: celo, transport: custom(provider) })
   const [account] = await wallet.requestAddresses()
   if (expectedOwner && account.toLowerCase() !== expectedOwner.toLowerCase()) throw new Error('Switch to your verified GoodDollar wallet before approving spending.')
@@ -120,7 +120,7 @@ async function setSpendingLimit(provider: EIP1193Provider, spender: string, gd: 
   const receipt = await rpc.waitForTransactionReceipt({ hash, timeout: 90_000 })
   if (receipt.status !== 'success') throw new Error('The spending approval failed.')
   if (policy) {
-    const configHash = await wallet.writeContract({ account, address: spender as `0x${string}`, abi: spendingPolicyAbi, functionName: 'configure', args: [parseEther(String(gd)), parseEther(String(Math.min(gd, policy.dailyGd))), BigInt(Math.floor(Date.now() / 1000) + policy.days * 86400)] })
+    const configHash = await wallet.writeContract({ account, address: spender as `0x${string}`, abi: spendingPolicyAbi, functionName: 'configure', args: [parseEther(String(gd)), parseEther(String(gd)), BigInt(Math.floor(Date.now() / 1000) + policy.days * 86400)] })
     const configured = await rpc.waitForTransactionReceipt({ hash: configHash, timeout: 90_000 })
     if (configured.status !== 'success') throw new Error('The spending policy was not saved. Try again.')
   }
@@ -1311,13 +1311,13 @@ function SpendingCard({ state, setState, flash }: { state: State; setState: (s: 
 
   if (!state.user.rootAddress) return null
   if (!treasury) return state.user.claimerActive ? <section className="app-card p-5"><h4 className="font-bold">Your GoodDollar wallet</h4><p className="mt-2 text-sm">Daily claims go to your wallet. Bill and AI spending will be available once protected spending is configured.</p></section> : null
-  const on = snap.limitLeftGd > 0
+  const on = snap.limitTotalGd > 0
 
   const limit = (gd: number, done: string) => async (provider: EIP1193Provider) => {
     setBusy('limit')
     setError(null)
     try {
-      const { account } = await setSpendingLimit(provider, treasury, gd, state.user.rootAddress!, state.user.claimerActive ? { dailyGd: state.config.dailyLimitGd, days: state.config.policyDays } : undefined)
+      const { account } = await setSpendingLimit(provider, treasury, gd, state.user.rootAddress!, state.user.claimerActive ? { days: state.config.policyDays } : undefined)
       if (account.toLowerCase() !== state.user.rootAddress?.toLowerCase()) {
         setError(`That was ${short(account)}. Jara spends from your GoodDollar wallet ${short(state.user.rootAddress ?? '')}; switch to it and try again.`)
         return
@@ -1354,19 +1354,19 @@ function SpendingCard({ state, setState, flash }: { state: State; setState: (s: 
         {snap.walletGd === null ? 'G$ —' : `G$ ${gdFmt(snap.walletGd)}`}
         {snap.walletGd !== null && <span className="ml-2 text-base font-bold text-ink/50">{formatNgn(Math.floor(snap.walletGd * snap.ngnPerGd))}</span>}
       </p>
-      {state.user.claimerActive && <p className="mt-2 text-sm text-ink/70">Spending permission lasts {state.config.policyDays} days, with a maximum of G$ {gdFmt(state.config.dailyLimitGd)} per UTC day and the total you approve. Cancelling it keeps daily claims running. The daily cap limits purchases, including automatic bills.</p>}
+      {state.user.claimerActive && <p className="mt-2 text-sm text-ink/70">Spending permission lasts {state.config.policyDays} days, up to the total you approve. Cancelling it keeps daily claims running.</p>}
       {state.user.claimerActive && snap.feesOwedGd > 0 && <p className="mt-2 text-sm text-ink/70">G$ {gdFmt(snap.feesOwedGd)} remains reserved for old network fees. It is not added to new purchases.</p>}
 
       {on ? (
         <>
           <p className="mt-1 text-sm font-semibold text-ink/70">
-            Jara pays bills and AI from here, up to <b>G$ {gdFmt(snap.limitLeftGd)}</b> more. Each purchase uses one wallet. Jara covers new payment network fees.
+            Jara pays bills and AI from here, up to <b>G$ {gdFmt(snap.limitTotalGd)}</b> more{snap.limitLeftGd < snap.limitTotalGd ? <> (G$ {gdFmt(snap.limitLeftGd)} of it today; raise your limit once to lift the old daily cap)</> : null}. Each purchase uses one wallet. Jara covers new payment network fees.
           </p>
           <div className="mt-4 grid gap-2">
             <WalletActionButton
               disabled={!!busy}
-              label={busy === 'limit' ? 'Approve in your wallet…' : `Raise limit to G$ ${gdFmt(snap.limitLeftGd + state.config.limitGd)}`}
-              onProvider={limit(snap.limitLeftGd + state.config.limitGd, 'Spending limit raised')}
+              label={busy === 'limit' ? 'Approve in your wallet…' : `Raise limit to G$ ${gdFmt(Math.floor(snap.limitTotalGd) + state.config.limitGd)}`}
+              onProvider={limit(Math.floor(snap.limitTotalGd) + state.config.limitGd, 'Spending limit raised')}
               onError={(err) => setError(walletErrorMessage(err))}
             />
           </div>

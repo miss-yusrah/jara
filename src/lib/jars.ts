@@ -1,5 +1,5 @@
 import { formatEther } from 'viem'
-import { gasStatus, gdBalance } from './chain'
+import { gasStatus, gdBalance, policyTotalLeft } from './chain'
 import { spendableWei, spendingPower } from './spend'
 import { atomic, run } from './db'
 import { hasPendingFunds, withAccountLock } from './account-lock'
@@ -61,8 +61,10 @@ export interface Snapshot {
   mode: 'wallet' | 'jar'
   /** G$ Jara claimed and holds, after network fees owed back. */
   claimedGd: number
-  /** How much more Jara may take from their wallet (wallet mode). */
+  /** How much more Jara may take from their wallet right now (wallet mode). */
   limitLeftGd: number
+  /** The whole spending limit left, which a daily cap may spread over several days. */
+  limitTotalGd: number
   /** Network fees Jara paid for them, owed back in G$. */
   feesOwedGd: number
 }
@@ -207,6 +209,7 @@ export async function snapshot(user: User): Promise<Snapshot> {
   const balance = power.totalWei
   const walletWei = user.rootAddress ? power.walletWei || (await gdBalance(user.rootAddress).catch(() => null)) : null
   // Gas only matters to people still on the older setup; in wallet mode Jara fronts it.
+  const totalLeft = user.claimerActive && user.rootAddress ? await policyTotalLeft(user.rootAddress).catch(() => power.allowanceWei) : power.allowanceWei
   const gas = user.connected && power.mode === 'jar' ? await gasStatus(user.agentAddress).catch(() => null) : null
   const allocated = jars.reduce((s, j) => s + j.balanceWei, 0n)
   const pending = (await run("SELECT 1 FROM payments WHERE user_id = ? AND status IN ('reserved', 'refunding') LIMIT 1", [user.id])).rows.length > 0
@@ -241,6 +244,7 @@ export async function snapshot(user: User): Promise<Snapshot> {
     mode: power.mode,
     claimedGd: toGd(power.agentAvailWei),
     limitLeftGd: toGd(power.allowanceWei),
+    limitTotalGd: toGd(totalLeft > power.allowanceWei ? totalLeft : power.allowanceWei),
     feesOwedGd: toGd(power.owedWei),
   }
 }
