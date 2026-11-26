@@ -10,7 +10,7 @@ const WEEK = [
   { day: 'Tue', icon: 'star', title: 'Your JAMB Biology practice', body: '20 questions, selectable answers and a results review. G$ 50 from your AI jar.' },
   { day: 'Wed', icon: 'sparkle', title: 'Brainstormed your project', body: '8 final-year project ideas in 20 seconds. G$ 150 from your AI jar.' },
   { day: 'Thu', icon: 'chat', title: '3 opportunities found', body: 'A CS internship and two scholarships that fit you, with real links.' },
-  { day: 'Fri', icon: 'coins', title: 'Weekly saver bonus', body: 'Claimed 5 days this week: +G$ 400, no forms.' },
+  { day: 'Fri', icon: 'coins', title: 'Weekly saver bonus', body: 'Claimed 5 days this week: +G$ 100, no forms.' },
   { day: 'Sat', icon: 'flame', title: '7-day streak bonus', body: 'Extra G$ dropped in for showing up all week.' },
   { day: 'Sun', icon: 'chart', title: 'Your weekly wrap', body: '6 drills done, 3 opportunities sent, every claim on time.' },
 ] as const
@@ -183,7 +183,7 @@ export default function Home() {
                   [
                     ['sun', 'Claimed G$ 1,400 into your jars'],
                     ['star', 'Sent your JAMB Biology drill'],
-                    ['coins', 'Collected a G$ 400 saver bonus'],
+                    ['coins', 'Collected a G$ 100 saver bonus'],
                     ['sparkle', 'AI jar covers 2 research briefs'],
                   ] as const
                 ).map(([ic, t]) => (

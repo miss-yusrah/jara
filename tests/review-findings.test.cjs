@@ -283,15 +283,15 @@ test('JAR-05: several accounts linked to one verified identity earn a single ref
   await referred(referrer, person, 'Second account')
   await referred(referrer, person.toUpperCase().replace('0X', '0x'), 'Third account')
   await rewards.collectRewards(referrer)
-  assert.equal(await referralGd(referrer), 1000)
+  assert.equal(await referralGd(referrer), 100)
   await referred(referrer, person, 'Fourth account, later')
   await rewards.collectRewards(referrer)
-  assert.equal(await referralGd(referrer), 1000)
-  assert.equal(await chain.gdBalance(referrer.agentAddress), gd(2000))
+  assert.equal(await referralGd(referrer), 100)
+  assert.equal(await chain.gdBalance(referrer.agentAddress), gd(1100)) // G$ 1,000 start + one G$ 100 referral reward
   // A different verified person still counts.
   await referred(referrer, rootOf('another-person'), 'Someone else')
   await rewards.collectRewards(referrer)
-  assert.equal(await referralGd(referrer), 2000)
+  assert.equal(await referralGd(referrer), 200)
 })
 
 test('JAR-05: one identity pays one referrer only, and never its own owner', async () => {
@@ -302,7 +302,7 @@ test('JAR-05: one identity pays one referrer only, and never its own owner', asy
   await referred(second, person, 'Via the second link')
   await rewards.collectRewards(first)
   await rewards.collectRewards(second)
-  assert.equal(await referralGd(first), 1000)
+  assert.equal(await referralGd(first), 100)
   assert.equal(await referralGd(second), 0)
   // A second account on the referrer's own identity is not a new person.
   const selfish = await fixture()
@@ -344,7 +344,7 @@ test('JAR-05: on Celo the referred account must still resolve to that verified i
     assert.equal(sent, 0)
     linked = true
     await rewards.collectRewards(referrer)
-    assert.equal(await referralGd(referrer), 1000)
+    assert.equal(await referralGd(referrer), 100)
     assert.equal(sent, 1)
   } finally { Object.assign(chain, originals); process.env.CHAIN_MODE = 'mock' }
 })

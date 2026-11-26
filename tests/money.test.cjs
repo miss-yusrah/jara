@@ -356,7 +356,7 @@ test('reward payout with a lost receipt is recovered without paying twice', asyn
   assert.equal((await run('SELECT COUNT(*) AS n FROM rewards_paid WHERE user_id = ?', [user.id])).rows[0].n, 0)
   assert.equal((await collectRewards(user)).length, 1)
   assert.equal((await collectRewards(user)).length, 0)
-  assert.equal(await chain.gdBalance(user.agentAddress), amount(1300))
+  assert.equal(await chain.gdBalance(user.agentAddress), amount(1100)) // G$ 1,000 start + the G$ 100 first-bill reward, paid once
 })
 
 test('chat retries return the saved answer and charge exactly once', async () => {

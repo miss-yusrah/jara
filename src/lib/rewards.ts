@@ -32,28 +32,31 @@ async function count(sql: string, args: (string | number)[]) {
 
 const WEEK = 7 * 86_400_000
 
+/** Every reward pays the same: G$ 100. */
+export const REWARD_GD = 100
+
 export const REWARD_RULES: RewardRule[] = [
   {
     key: () => 'first-bill',
     title: 'First bill paid with G$',
-    amountGd: 300,
+    amountGd: REWARD_GD,
     eligible: async (u) => (await count(`SELECT COUNT(*) AS n FROM activity WHERE user_id = ? AND type = 'pay' AND status = 'done'`, [u.id])) > 0,
   },
   {
     key: () => `weekly-saver-${isoWeek()}`,
     title: 'Weekly saver — claimed 5 days this week',
-    amountGd: 400,
+    amountGd: REWARD_GD,
     eligible: async (u) => (await count(`SELECT COUNT(*) AS n FROM activity WHERE user_id = ? AND type = 'claim' AND created_at > ?`, [u.id, Date.now() - WEEK])) >= 5,
   },
   {
     key: () => 'first-ai',
     title: 'First AI helper paid with G$',
-    amountGd: 200,
+    amountGd: REWARD_GD,
     eligible: async (u) => (await count(`SELECT COUNT(*) AS n FROM ai_runs WHERE user_id = ? AND demo = 0`, [u.id])) > 0,
   },
 ]
 
-export const REFERRAL_REWARD_GD = 1000
+export const REFERRAL_REWARD_GD = REWARD_GD
 const referralKey = (root: string) => `referral-id-${root}`
 
 /** The account's agent wallet must resolve, on-chain and right now, to the identity it claims. */
@@ -172,7 +175,7 @@ export type Referral = { name: string; joinedAt: number; status: 'joined' | 'ver
  * Who joined with this person's invite link, newest first. Names only, never wallets.
  * joined: has an account, not set up yet. verified: set up with a verified GoodDollar
  * identity, reward on its way (Jara collects it on the next hourly run, budget allowing).
- * rewarded: the G$ 1,000 was paid.
+ * rewarded: the G$ 100 reward was paid.
  */
 export async function listReferrals(user: User): Promise<Referral[]> {
   const rows = (await run(
@@ -197,9 +200,9 @@ export async function rewardProgress(user: User) {
   return {
     earnedGd: Number(earned.rows[0].n),
     items: [
-      { title: 'Weekly saver', detail: `${Math.min(claimsThisWeek, 5)}/5 claim days`, amountGd: 400, done: paid.has(`weekly-saver-${isoWeek()}`), progress: Math.min(claimsThisWeek, 5) / 5 },
-      { title: 'First bill with G$', detail: 'Pay any bill', amountGd: 300, done: paid.has('first-bill'), progress: paid.has('first-bill') ? 1 : 0 },
-      { title: 'First AI helper', detail: 'Use any AI helper', amountGd: 200, done: paid.has('first-ai'), progress: paid.has('first-ai') ? 1 : 0 },
+      { title: 'Weekly saver', detail: `${Math.min(claimsThisWeek, 5)}/5 claim days`, amountGd: REWARD_GD, done: paid.has(`weekly-saver-${isoWeek()}`), progress: Math.min(claimsThisWeek, 5) / 5 },
+      { title: 'First bill with G$', detail: 'Pay any bill', amountGd: REWARD_GD, done: paid.has('first-bill'), progress: paid.has('first-bill') ? 1 : 0 },
+      { title: 'First AI helper', detail: 'Use any AI helper', amountGd: REWARD_GD, done: paid.has('first-ai'), progress: paid.has('first-ai') ? 1 : 0 },
       { title: 'Invite a friend', detail: 'Per verified friend, within the referral campaign budget', amountGd: REFERRAL_REWARD_GD, done: false, progress: 0 },
     ],
   }

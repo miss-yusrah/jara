@@ -2093,7 +2093,7 @@ function RewardsCard({ state, flash }: { state: State; flash: (t: string) => voi
       </ul>
       <button
         onClick={() => {
-          navigator.clipboard?.writeText(user.inviteLink).then(() => flash('Invite link copied — G$ 1,000 for each new verified friend who joins'), () => flash(user.inviteLink))
+          navigator.clipboard?.writeText(user.inviteLink).then(() => flash('Invite link copied — G$ 100 for each new verified friend who joins'), () => flash(user.inviteLink))
         }}
         className="mt-4 w-full rounded-2xl bg-cream py-3 text-sm font-bold ring-1 ring-ink/10 hover:ring-ink/30"
       >
@@ -2107,7 +2107,7 @@ function RewardsCard({ state, flash }: { state: State; flash: (t: string) => voi
 const REFERRAL_STATUS = {
   joined: { text: 'Joined · needs to finish setup', tone: 'text-ink/50' },
   verified: { text: 'Verified · reward on its way', tone: 'text-mandarin' },
-  rewarded: { text: `+G$ ${gdFmt(1000)} paid`, tone: 'text-forest' },
+  rewarded: { text: `+G$ ${gdFmt(100)} paid`, tone: 'text-forest' },
 } as const
 
 function Referrals({ list }: { list: State['referrals'] }) {
