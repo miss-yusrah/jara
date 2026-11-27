@@ -402,21 +402,17 @@ export async function sendGdFromTreasury(to: Address, amount: bigint, operationI
 }
 
 /**
- * Jara Streak's prize wallet: STREAK_WALLET_PRIVATE_KEY when set (for example the referral program's
- * wallet, funded separately), otherwise the treasury. Sends from one wallet are signed one at a time,
- * so sharing a wallet with another program never clashes.
+ * Jara Streak pays from the one Jara treasury, like every other payout. Sends from one wallet
+ * are signed one at a time, so sharing it with claims and rewards never clashes.
  */
-function streakKey(): `0x${string}` {
-  return serverConfig().streak.walletKey || treasuryKey()
-}
 export function streakWalletAddress(): Address {
   if (isMock()) return '0x000000000000000000000000000000000000c0de'
-  return privateKeyToAccount(streakKey()).address
+  return treasuryAddress()
 }
 export async function sendGdFromStreakWallet(to: Address, amount: bigint, operationId: string): Promise<Hash> {
   if (isMock()) return mockTransfer(operationId, null, to, amount)
-  const key = streakKey()
-  const from = privateKeyToAccount(key).address
+  const key = treasuryKey()
+  const from = treasuryAddress()
   return (await durableTransaction(operationId, key, { to: GD.token, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, amount] }), transfer: { token: GD.token, from, to, amount: String(amount) } })).hash
 }
 

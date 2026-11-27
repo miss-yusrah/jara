@@ -29,8 +29,7 @@ import { lagosDay, multiplier, points, questionMs } from './rules'
 //
 // When the bounty closes, the top places are frozen once and the STREAK_PRIZE_POOL_GD is split by
 // rank (STREAK_PRIZE_SPLIT: 40/35/25). Each winner claims their share; it goes to their verified wallet, exactly once. All G$
-// (prizes and per-answer) comes from the streak wallet (STREAK_WALLET_PRIVATE_KEY, else the
-// treasury). Everything players see is in G$.
+// (prizes and per-answer) comes from the Jara treasury. Everything players see is in G$.
 
 export class StreakError extends Error {
   constructor(message: string, readonly status = 400, readonly code?: string) { super(message) }
