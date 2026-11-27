@@ -14,6 +14,7 @@ import { walletClaimerMessage, walletKeyExportMessage, walletLoginMessage } from
 import { spendingPolicyAbi } from '@/lib/spending-policy'
 import { useSheetDialog } from './useSheetDialog'
 import { DashboardNav, dashboardView, type DashboardView } from './DashboardNav'
+import { StreakBanner, type StreakBannerState } from './StreakBanner'
 import { DailyChallenge } from './DailyChallenge'
 import { FlowVote } from './FlowVote'
 import { fvReturn } from '@/lib/fv-return'
@@ -83,6 +84,7 @@ interface State {
   snapshot: { jars: JarView[]; totalGd: number; freeGd: number; freeNgn: number; ngnPerGd: number; walletGd: number | null; gas: { celo: number; perTxCelo: number } | null; mode: 'wallet' | 'jar'; claimedGd: number; limitLeftGd: number; limitTotalGd: number; feesOwedGd: number }
   activity: Activity[]
   messages: Msg[]
+  campusStreak?: StreakBannerState
   config: { chainMode: 'celo' | 'mock'; keylessAvailable: boolean; spendingContract: string | null; policyDays: number; provider: string; billsLive: boolean; llm: string; treasury: string | null; limitGd: number }
 }
 
@@ -893,6 +895,7 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
         <div hidden={tab !== 'overview'}>
           <div className="overview-grid">
             <div className="grid min-w-0 content-start gap-6">
+              <StreakBanner streak={state.campusStreak} />
               <BalanceBar state={state} onProfile={onProfile} onPay={state.config.billsLive ? () => setPaying(true) : undefined} />
               <section className="app-card">
                 <JarShelf jars={snap.jars} onEdit={setEditing} />

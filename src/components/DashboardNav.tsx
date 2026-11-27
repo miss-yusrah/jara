@@ -57,6 +57,7 @@ export function DashboardNav({ active, onSelect, onWallet }: Props) {
       <div className="mt-7 hidden border-t border-ink/10 pt-5 lg:grid lg:gap-1">
         <Link href="/app/ai" className="dashboard-nav-item"><Icon name="sparkle" className="h-5 w-5" strokeWidth={1.8} /> Jara AI <span className="ml-auto text-xs">↗</span></Link>
         <Link href="/app/exam" className="dashboard-nav-item"><Icon name="star" className="h-5 w-5" strokeWidth={1.8} /> Exam prep <span className="ml-auto text-xs">↗</span></Link>
+        <Link href="/app/streak" className="dashboard-nav-item"><Icon name="flame" className="h-5 w-5" strokeWidth={1.8} /> Jara Streak <span className="ml-auto text-xs">↗</span></Link>
         <button onClick={onWallet} className="dashboard-nav-item"><Icon name="coins" className="h-5 w-5" strokeWidth={1.8} /> Your wallet</button>
         <a href="#guide" onClick={(event) => { event.preventDefault(); onSelect('guide') }} aria-current={active === 'guide' ? 'page' : undefined} className={`dashboard-nav-item ${active === 'guide' ? 'is-active' : ''}`}><Icon name="sun" className="h-5 w-5" strokeWidth={1.8} /> Getting started</a>
         <a href="#vote" onClick={(event) => { event.preventDefault(); onSelect('vote') }} aria-current={active === 'vote' ? 'page' : undefined} className={`dashboard-nav-item ${active === 'vote' ? 'is-active' : ''}`}><Icon name="check" className="h-5 w-5" strokeWidth={1.8} /> Vote for Jara</a>
@@ -86,6 +87,7 @@ function MoreSheet({ active, onClose, onSelect, onWallet }: Props & { onClose: (
         </div>
         <div className="grid gap-1">
           <button type="button" onClick={() => onSelect('chat')} className={`${row} ${current('chat')}`}><Icon name="chat" className="h-5 w-5 text-forest" /> <span>Ask Jara<span className="block text-xs font-semibold text-ink/50">Airtime, bills and your requests</span></span></button>
+          <Link href="/app/streak" className={row}><Icon name="flame" className="h-5 w-5 text-mandarin" /> <span>Jara Streak<span className="block text-xs font-semibold text-ink/50">The campus bounty game</span></span></Link>
           <Link href="/app/exam" className={row}><Icon name="star" className="h-5 w-5 text-forest" /> Exam prep</Link>
           <button type="button" onClick={onWallet} className={row}><Icon name="coins" className="h-5 w-5 text-forest" /> Your wallet</button>
           <button type="button" onClick={() => onSelect('guide')} className={`${row} ${current('guide')}`}><Icon name="sun" className="h-5 w-5 text-forest" /> Getting started</button>

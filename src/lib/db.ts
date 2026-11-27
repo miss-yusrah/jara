@@ -173,6 +173,64 @@ const SCHEMA = [
     referred_user_id TEXT NOT NULL REFERENCES users (id),
     created_at INTEGER NOT NULL
   )`,
+  // Jara Streak (campus bounty). One player per verified identity (root wallet) per event.
+  `CREATE TABLE IF NOT EXISTS streak_players (
+    event_id TEXT NOT NULL,
+    root_address TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users (id),
+    campus TEXT,
+    best_score INTEGER NOT NULL DEFAULT 0,
+    best_streak INTEGER NOT NULL DEFAULT 0,
+    best_at INTEGER,
+    runs INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (event_id, root_address)
+  )`,
+  `CREATE INDEX IF NOT EXISTS streak_players_board_idx ON streak_players (event_id, best_score DESC, best_at)`,
+  `CREATE TABLE IF NOT EXISTS streak_runs (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    root_address TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users (id),
+    day TEXT NOT NULL,
+    question_ids TEXT NOT NULL,
+    current INTEGER NOT NULL DEFAULT 0,
+    streak INTEGER NOT NULL DEFAULT 0,
+    score INTEGER NOT NULL DEFAULT 0,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    ended TEXT,
+    earned_gd INTEGER NOT NULL DEFAULT 0,
+    paid_at INTEGER,
+    tx_hash TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS streak_runs_player_idx ON streak_runs (event_id, root_address, day)`,
+  `CREATE TABLE IF NOT EXISTS streak_answers (
+    run_id TEXT NOT NULL REFERENCES streak_runs (id),
+    idx INTEGER NOT NULL,
+    question_id TEXT NOT NULL,
+    flipped INTEGER NOT NULL,
+    issued_at INTEGER NOT NULL,
+    deadline INTEGER NOT NULL,
+    answered_at INTEGER,
+    choice INTEGER,
+    correct INTEGER,
+    points INTEGER NOT NULL DEFAULT 0,
+    gd INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, idx)
+  )`,
+  // Winners, frozen once when the bounty closes, so a re-run pays the same people the same amount.
+  `CREATE TABLE IF NOT EXISTS streak_prizes (
+    event_id TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    root_address TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users (id),
+    score INTEGER NOT NULL,
+    amount_gd INTEGER NOT NULL,
+    tx_hash TEXT,
+    paid_at INTEGER,
+    PRIMARY KEY (event_id, rank)
+  )`,
   // Simulated balances for CHAIN_MODE=mock.
   `CREATE TABLE IF NOT EXISTS mock_balances (address TEXT PRIMARY KEY, wei TEXT NOT NULL)`,
   // Proactive jobs the user switched on: daily exam drills, opportunity scout, verification reminders.
@@ -215,6 +273,11 @@ async function connect(): Promise<Client> {
   // Columns added after the first release.
   for (const sql of [
     'ALTER TABLE users ADD COLUMN claimer_address TEXT',
+    // Jara Streak per-answer G$ (added after the first test build of the bounty).
+    'ALTER TABLE streak_runs ADD COLUMN earned_gd INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE streak_runs ADD COLUMN paid_at INTEGER',
+    'ALTER TABLE streak_runs ADD COLUMN tx_hash TEXT',
+    'ALTER TABLE streak_answers ADD COLUMN gd INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN claimer_factory TEXT',
     'ALTER TABLE users ADD COLUMN claimer_active INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN skills TEXT NOT NULL DEFAULT \'[]\'',
@@ -234,6 +297,7 @@ async function connect(): Promise<Client> {
     'CREATE INDEX IF NOT EXISTS activity_provider_ref_idx ON activity (provider_ref)',
     'ALTER TABLE activity ADD COLUMN operation_id TEXT',
     'CREATE UNIQUE INDEX IF NOT EXISTS activity_operation_idx ON activity(operation_id)',
+    'CREATE INDEX IF NOT EXISTS streak_runs_open_idx ON streak_runs (event_id, finished_at, paid_at)',
   ]) {
     try {
       await client.execute(sql)

@@ -153,7 +153,49 @@ export function serverConfig() {
       authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
     },
     cronSecret: process.env.CRON_SECRET ?? '',
+    // Jara Streak, the campus bounty. Closed until STREAK_START_AT and STREAK_END_AT are set.
+    streak: {
+      eventId: process.env.STREAK_EVENT_ID || 'campus-streak-1',
+      startAt: time('STREAK_START_AT'),
+      endAt: time('STREAK_END_AT'),
+      // Friends who join from this moment earn extra runs (defaults to the start).
+      invitesFrom: time('STREAK_INVITES_FROM'),
+      // The prize pool, split by rank: STREAK_PRIZE_SPLIT percent for 1st, 2nd, 3rd… (40,35,25 of
+      // G$ 100,000 → G$ 40,000, 35,000, 25,000). The number of winners is the number of places.
+      prizePoolGd: num('STREAK_PRIZE_POOL_GD', 100000),
+      prizeSplit: (process.env.STREAK_PRIZE_SPLIT || '40,35,25').split(',').map((x) => Number(x.trim())),
+      // The wallet that pays prizes and per-answer G$. Unset: the treasury.
+      walletKey: (process.env.STREAK_WALLET_PRIVATE_KEY || undefined) as `0x${string}` | undefined,
+      // G$ for every correct answer, sent to the player's wallet after each run. Stops when the
+      // whole bounty has paid STREAK_POOL_CAP_GD (0 turns per-answer G$ off), and each player earns
+      // at most STREAK_DAILY_CAP_GD a day (Lagos time).
+      perCorrectGd: num('STREAK_PER_CORRECT_GD', 20),
+      poolCapGd: num('STREAK_POOL_CAP_GD', 0),
+      dailyCapGd: num('STREAK_DAILY_CAP_GD', 400),
+      // Free runs refill on a rolling window: STREAK_RUNS_PER_WINDOW every STREAK_RUN_WINDOW_MINUTES,
+      // so nobody is locked out for long. Inviting friends adds permanent capacity.
+      runsPerWindow: num('STREAK_RUNS_PER_WINDOW', 10),
+      runWindowMinutes: num('STREAK_RUN_WINDOW_MINUTES', 60),
+      runsPerFriend: num('STREAK_RUNS_PER_FRIEND', 3),
+      maxFriendRuns: num('STREAK_MAX_FRIEND_RUNS', 30),
+      // Double points windows: comma-separated start times, each lasting STREAK_GOLDEN_MINUTES.
+      goldenHours: (process.env.STREAK_GOLDEN_HOURS ?? '').split(',').map((s) => s.trim()).filter(Boolean).map((s, i) => timeValue(`STREAK_GOLDEN_HOURS[${i}]`, s)),
+      goldenMinutes: num('STREAK_GOLDEN_MINUTES', 15),
+      // Playing needs at least one Flowstate vote for Jara.
+      requireFlowstate: process.env.STREAK_REQUIRE_FLOWSTATE === 'true',
+    },
   }
+}
+
+/** An ISO date with offset (2026-11-28T00:00:00+01:00) or epoch milliseconds; 0 when unset. */
+function time(name: string): number {
+  const raw = process.env[name]
+  return raw ? timeValue(name, raw) : 0
+}
+function timeValue(name: string, raw: string): number {
+  const value = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw)
+  if (!Number.isFinite(value)) throw new Error(`${name} must be an ISO date or epoch milliseconds, got "${raw}"`)
+  return value
 }
 
 /** Test phone numbers are only accepted when no real money can move. */
@@ -192,7 +234,7 @@ export function demoFundsAllowed(): boolean {
 export function assertSafeRuntime() {
   const cfg = serverConfig()
   if (cfg.moneyProblem) throw new Error(cfg.moneyProblem)
-  if (cfg.chain.mode === 'mock' && (falconKeyLive() || (vtpassLive() && cfg.vtpass.apiKey) || cfg.chain.treasuryKey || process.env.TELEMETRY_REPORTER_KEY || process.env.DAILY_CHALLENGE_SIGNER_KEY)) {
+  if (cfg.chain.mode === 'mock' && (falconKeyLive() || (vtpassLive() && cfg.vtpass.apiKey) || cfg.chain.treasuryKey || cfg.streak.walletKey || process.env.TELEMETRY_REPORTER_KEY || process.env.DAILY_CHALLENGE_SIGNER_KEY)) {
     throw new Error('Demo deployments must not contain live provider or treasury signing credentials.')
   }
   if (cfg.chain.mode === 'celo' && cfg.custody.provider === 'local' && !/^[0-9a-f]{64}$/i.test(cfg.walletSecret)) {

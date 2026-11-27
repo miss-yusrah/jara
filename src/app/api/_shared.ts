@@ -11,6 +11,7 @@ import { AI_TOOLS, listAiRuns } from '@/lib/ai-tools'
 import { listReferrals, rewardProgress } from '@/lib/rewards'
 import { DRILL_PRICE_GD, EXAMS, SCOUT_PRICE_GD, daysUntil, getJobs, verificationStatus } from '@/lib/agent/jobs'
 import { listActivity, type User, ensureRefCode } from '@/lib/users'
+import { streakBanner } from '@/lib/streak/service'
 
 export async function userState(user: User) {
   const cfg = serverConfig()
@@ -67,6 +68,8 @@ export async function userState(user: User) {
         daysLeft: verification.expiresAt ? Math.ceil((verification.expiresAt - Date.now()) / 86_400_000) : null,
       },
     },
+    // Jara Streak (campus bounty) window, for the dashboard banner. Config only, no reads.
+    campusStreak: streakBanner(),
     snapshot: snap,
     activity,
     messages,
