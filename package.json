@@ -14,6 +14,8 @@
     "test": "node --require ./tests/register.cjs --test tests/*.test.cjs"
   },
   "dependencies": {
+    "@goodcash/react": "^0.2.0",
+    "@goodcash/sdk": "^0.2.1",
     "@goodsdks/citizen-sdk": "^1.2.7",
     "@libsql/client": "^0.18.0",
     "@walletconnect/ethereum-provider": "^2.26.0",

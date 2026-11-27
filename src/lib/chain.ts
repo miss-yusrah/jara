@@ -395,6 +395,30 @@ export async function verifySpendingContract(): Promise<Address> {
   return address
 }
 
+// ---------- referral rewards ----------
+// Referral rewards are paid from the one Jara treasury, like every other payout.
+
+export function referralWalletConfigured(): boolean {
+  return isMock() || Boolean(serverConfig().chain.treasuryKey)
+}
+
+export function referralWalletAddress(): Address | null {
+  return referralWalletConfigured() ? treasuryAddress() : null
+}
+
+/** Pay a referral reward from the treasury. Durable under `operationId`: a retry never pays twice. */
+export async function sendGdFromReferralWallet(to: Address, amount: bigint, operationId: string): Promise<Hash> {
+  return sendGdFromTreasury(to, amount, operationId)
+}
+
+/** The treasury's G$ and CELO, for the referral admin view. */
+export async function referralWalletBalances(): Promise<{ address: Address; gd: number; celo: number } | null> {
+  const address = referralWalletAddress()
+  if (!address || isMock()) return null
+  const [gd, celoWei] = await Promise.all([gdBalance(address), publicClient().getBalance({ address })])
+  return { address, gd: Number(formatEther(gd)), celo: Number(formatEther(celoWei)) }
+}
+
 /** Rewards and refunds must reuse their durable operation ID on every retry. */
 export async function sendGdFromTreasury(to: Address, amount: bigint, operationId: string): Promise<Hash> {
   if (isMock()) return mockTransfer(operationId, null, to, amount)

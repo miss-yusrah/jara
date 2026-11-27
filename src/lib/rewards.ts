@@ -6,6 +6,8 @@ import { syncJars, withUserLock } from './jars'
 import { authorizedUser } from './wallet-authorization'
 import { type User } from './users'
 import { rewardDestination } from './claimers'
+import { milestoneConfig, payReferralMilestones } from './referral-payout'
+import { getUserById } from './users'
 
 // G$ rewards the agent finds and collects for the user. Each reward is keyed so
 // it pays once (or once per period). Paid from the Jara treasury.
@@ -136,6 +138,11 @@ async function alreadyPaid(userId: string): Promise<Set<string>> {
   return new Set(r.rows.map((x) => x.reward_key as string))
 }
 
+/** Referral rewards are paid from the one Jara treasury. */
+async function sendReferralReward(to: Address, amount: bigint, id: string) {
+  return sendGdFromTreasury(to, amount, id)
+}
+
 /** Find and collect every reward the user qualifies for. */
 export async function collectRewards(user: User): Promise<{ title: string; amountGd: number }[]> {
   return withUserLock(user.id, async () => {
@@ -154,7 +161,8 @@ export async function collectRewards(user: User): Promise<{ title: string; amoun
         const amount = parseEther(String(r.amountGd))
         const id = `reward:${user.id}:${r.key}`
         if (r.key.startsWith('referral-') && !(await reserveReferralBudget(id, r.amountGd))) continue
-        const hash = await sendGdFromTreasury(await rewardDestination(user, id), amount, id)
+        const destination = await rewardDestination(user, id)
+        const hash = r.key.startsWith('referral-') ? await sendReferralReward(destination, amount, id) : await sendGdFromTreasury(destination, amount, id)
         await atomic(async (tx) => {
           await tx.execute({ sql: 'INSERT OR IGNORE INTO rewards_paid(user_id, reward_key, amount_gd, created_at) VALUES (?, ?, ?, ?)', args: [user.id, r.key, r.amountGd, Date.now()] })
           await tx.execute({ sql: `INSERT OR IGNORE INTO activity(user_id, type, amount_wei, tx_hash, title, operation_id, created_at) VALUES (?, 'reward', ?, ?, ?, ?, ?)`, args: [user.id, String(amount), hash, `Reward found: ${r.title}`, `reward:${user.id}:${r.key}`, Date.now()] })
@@ -163,6 +171,10 @@ export async function collectRewards(user: User): Promise<{ title: string; amoun
       } catch (err) {
         console.error('[rewards] payout failed', r.key, err)
       }
+    }
+    // Every 10 verified friends: G$ worth ₦5,000 straight to their own wallet.
+    for (const m of await payReferralMilestones(user).catch((err) => { console.error('[rewards] milestone payout deferred', err instanceof Error ? err.message : 'error'); return [] })) {
+      collected.push({ title: `${m.friends} friends invited`, amountGd: m.amountGd })
     }
     if (collected.length) await syncJars(user)
     return collected
@@ -206,4 +218,35 @@ export async function rewardProgress(user: User) {
       { title: 'Invite a friend', detail: 'Per verified friend, within the referral campaign budget', amountGd: REFERRAL_REWARD_GD, done: false, progress: 0 },
     ],
   }
+}
+
+const lastSweep = new Map<string, number>()
+
+/**
+ * The per-minute check for referral milestones, so a reward arrives within minutes of the friend
+ * who completes a set of 10 getting verified, not at the next daily run. It looks only at people
+ * whose connected friends could complete a set they have not been paid for, and checks each at most
+ * every 10 minutes (counting a friend means checking their identity on-chain).
+ */
+export async function payDueReferralMilestones(): Promise<number> {
+  const cfg = milestoneConfig()
+  if (!cfg.enabled) return 0
+  const due = (await run(`SELECT c.referrer_id AS user_id FROM
+      (SELECT referred_by AS referrer_id, COUNT(DISTINCT lower(root_address)) AS n FROM users WHERE referred_by IS NOT NULL AND connected = 1 AND root_address IS NOT NULL GROUP BY referred_by) c
+    LEFT JOIN (SELECT user_id, COUNT(*) AS done FROM referral_payouts WHERE status IN ('paid', 'manual') GROUP BY user_id) p ON p.user_id = c.referrer_id
+    WHERE c.n / ? > COALESCE(p.done, 0) LIMIT 200`, [cfg.friends])).rows
+  let sent = 0
+  for (const row of due) {
+    const id = String(row.user_id)
+    if (Date.now() - (lastSweep.get(id) ?? 0) < 10 * 60_000) continue
+    lastSweep.set(id, Date.now())
+    const account = await getUserById(id)
+    if (!account?.connected || !account.rootAddress) continue
+    try {
+      sent += (await collectRewards(account)).length
+    } catch (err) {
+      console.warn('[rewards] milestone check deferred', id, err instanceof Error ? err.message : 'error')
+    }
+  }
+  return sent
 }

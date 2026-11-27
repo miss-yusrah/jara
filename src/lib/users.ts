@@ -202,7 +202,7 @@ export async function linkTelegram(userId: string, chatId: string) {
 
 // ---------- activity ----------
 
-export type ActivityType = 'claim' | 'deposit' | 'pay' | 'refund' | 'reward' | 'move' | 'ai' | 'agent'
+export type ActivityType = 'claim' | 'deposit' | 'pay' | 'refund' | 'reward' | 'move' | 'ai' | 'agent' | 'cashout' | 'topup'
 
 export interface Activity {
   id: number

@@ -9,6 +9,7 @@ import { snapshot } from '@/lib/jars'
 import { botLink } from '@/lib/telegram'
 import { AI_TOOLS, listAiRuns } from '@/lib/ai-tools'
 import { listReferrals, rewardProgress } from '@/lib/rewards'
+import { referralRewardState } from '@/lib/referral-payout'
 import { DRILL_PRICE_GD, EXAMS, SCOUT_PRICE_GD, daysUntil, getJobs, verificationStatus } from '@/lib/agent/jobs'
 import { listActivity, type User, ensureRefCode } from '@/lib/users'
 import { streakBanner } from '@/lib/streak/service'
@@ -51,6 +52,8 @@ export async function userState(user: User) {
     aiTools: Object.entries(AI_TOOLS).map(([id, t]) => ({ id, name: t.name, blurb: t.blurb, priceGd: t.priceGd, placeholder: t.placeholder })),
     rewards,
     referrals,
+    // A bad milestone config must never break the whole app state.
+    referralReward: await referralRewardState(user).catch(() => null),
     jobs: {
       exam: {
         on: jobs.examOn,

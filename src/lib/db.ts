@@ -66,6 +66,23 @@ const SCHEMA = [
     pending_action TEXT,
     created_at INTEGER NOT NULL
   )`,
+  // Invite-milestone rewards: G$ sent automatically from the referral wallet to the person's own
+  // wallet, once per milestone (10 friends = 1, 20 = 2…). 'manual' = paid before this existed.
+  `CREATE TABLE IF NOT EXISTS referral_payouts (
+    user_id TEXT NOT NULL REFERENCES users (id),
+    milestone INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    amount_ngn INTEGER NOT NULL,
+    amount_g TEXT,
+    to_address TEXT,
+    tx_hash TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, milestone)
+  )`,
+  // One-time steps that must never run twice (by name).
+  'CREATE TABLE IF NOT EXISTS app_flags (name TEXT PRIMARY KEY, at INTEGER NOT NULL)',
   `CREATE TABLE IF NOT EXISTS jars (
     user_id TEXT NOT NULL REFERENCES users (id),
     kind TEXT NOT NULL,
@@ -306,6 +323,7 @@ async function connect(): Promise<Client> {
     }
   }
   await leaveDemoMode(client)
+  await referralStartingLine(client)
   await renewRecurringConsent(client)
   // Referral rewards paid before identities were tracked (keyed "referral-<account id>")
   // count against that account's identity, so the same person is never paid for twice.
@@ -427,4 +445,26 @@ export async function atomic<T>(fn: (tx: Transaction) => Promise<T>): Promise<T>
     tx.close()
     if (client !== shared) client.close()
   }
+}
+
+/**
+ * Invite rewards were paid by hand (bank transfer) before Jara paid them through GoodCash. The first
+ * time this runs, every full set of friends a person already has counts as paid, so nobody is paid
+ * twice. From then on, each new set (10 by default) earns a reward. Runs once, ever.
+ */
+export async function referralStartingLine(client: Client, flag = 'referral_milestone_baseline') {
+  if ((await client.execute({ sql: 'SELECT 1 FROM app_flags WHERE name = ?', args: [flag] })).rows.length) return 0
+  const per = Math.max(1, Math.floor(serverConfig().referralMilestone.friends))
+  const counts = (await client.execute('SELECT referrer_id, COUNT(*) AS n FROM referral_identities GROUP BY referrer_id')).rows
+  const now = Date.now()
+  const writes: { sql: string; args: (string | number)[] }[] = []
+  for (const c of counts) {
+    for (let m = 1; m <= Math.floor(Number(c.n) / per); m++) {
+      writes.push({ sql: `INSERT OR IGNORE INTO referral_payouts (user_id, milestone, status, amount_ngn, error, created_at, updated_at)
+        VALUES (?, ?, 'manual', 0, 'Paid before invite rewards moved into Jara', ?, ?)`, args: [String(c.referrer_id), m, now, now] })
+    }
+  }
+  writes.push({ sql: 'INSERT OR IGNORE INTO app_flags (name, at) VALUES (?, ?)', args: [flag, now] })
+  await client.batch(writes, 'write')
+  return writes.length - 1
 }

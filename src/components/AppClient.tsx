@@ -13,6 +13,8 @@ import { Markdown } from './Markdown'
 import { walletClaimerMessage, walletKeyExportMessage, walletLoginMessage } from '@/lib/wallet-login'
 import { spendingPolicyAbi } from '@/lib/spending-policy'
 import { useSheetDialog } from './useSheetDialog'
+import { GoodCashCard } from './GoodCash'
+import { InviteReward, type InviteRewardState } from './InviteReward'
 import { DashboardNav, dashboardView, type DashboardView } from './DashboardNav'
 import { StreakBanner, type StreakBannerState } from './StreakBanner'
 import { DailyChallenge } from './DailyChallenge'
@@ -76,6 +78,7 @@ interface State {
   aiTools: { id: string; name: string; blurb: string; priceGd: number; placeholder: string }[]
   rewards: { earnedGd: number; items: { title: string; detail: string; amountGd: number; done: boolean; progress: number }[] }
   referrals: { name: string; joinedAt: number; status: 'joined' | 'verified' | 'rewarded' }[]
+  referralReward?: InviteRewardState | null
   jobs: {
     exam: { on: boolean; exam: string | null; subjects: string[]; date: string | null; daysLeft: number | null; drillsDone: number; priceGd: number; options: string[] }
     scout: { on: boolean; interests: string | null; lastAt: number | null; priceGd: number }
@@ -934,7 +937,7 @@ function Dashboard({ state, setState, flash, onProfile }: { state: State; setSta
             <div className="app-card p-6"><Icon name="jar" className="h-8 w-8 text-forest" /><h2 className="mt-4 text-lg font-bold">Your budgets set the limits.</h2><p className="mt-2 text-sm leading-relaxed text-ink/60">Paid jobs use your AI jar. Bill payments use their matching jar. Jara won’t borrow from another jar to finish a job.</p><button onClick={() => navigate('overview')} className="mt-4 text-sm font-bold text-forest">Manage your jars →</button></div>
           </div>
         </div>
-        <div hidden={tab !== 'rewards'} className="max-w-3xl"><RewardsCard state={state} flash={flash} /></div>
+        <div hidden={tab !== 'rewards'} className="max-w-3xl"><RewardsCard state={state} flash={flash} onPay={state.config.billsLive ? () => setPaying(true) : undefined} /></div>
         <div hidden={tab !== 'chat'} className="mx-auto max-w-3xl"><Chat state={state} setState={setState} flash={flash} /></div>
         {tab === 'vote' && (canVote
           ? <div className="max-w-3xl"><FlowVote key={state.user.rootAddress!} rootAddress={state.user.rootAddress!} /></div>
@@ -1094,6 +1097,9 @@ function ProfileSheet({ state, setState, flash, onClose, onSignOut }: { state: S
           {state.config.chainMode === 'mock' && <div className="rounded-2xl bg-white p-5"><p className="font-bold">Your demo wallet</p><p className="mt-2 text-sm leading-relaxed text-ink/60">This preview uses simulated G$. Explore your jars and try a budget move. No real wallet is connected.</p></div>}
           {state.config.chainMode !== 'mock' && <ClaimHealthCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && <SpendingCard state={state} setState={setState} flash={flash} />}
+          {state.config.chainMode !== 'mock' && state.user.rootAddress && (
+            <GoodCashCard userId={state.user.id} wallet={state.user.rootAddress as `0x${string}`} flash={flash} defaultAmountG={snap.walletGd} heldByJara={snap.mode === 'jar'} />
+          )}
           {state.config.chainMode !== 'mock' && (state.config.keylessAvailable || state.user.claimerAddress) && <ClaimerCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && snap.mode === 'jar' && <GasCard state={state} setState={setState} flash={flash} />}
           {state.config.chainMode !== 'mock' && snap.mode === 'jar' && <WalletCard state={state} setState={setState} flash={flash} />}
@@ -2062,7 +2068,7 @@ function AgentJobs({ state, setState, flash }: { state: State; setState: (s: Sta
   )
 }
 
-function RewardsCard({ state, flash }: { state: State; flash: (t: string) => void }) {
+function RewardsCard({ state, flash, onPay }: { state: State; flash: (t: string) => void; onPay?: () => void }) {
   const { rewards, user } = state
   return (
     <section className="app-card p-5 sm:p-7">
@@ -2071,6 +2077,7 @@ function RewardsCard({ state, flash }: { state: State; flash: (t: string) => voi
         <p className="font-bold text-forest">G$ {gdFmt(rewards.earnedGd)} earned</p>
       </div>
       <p className="mt-1 text-sm font-semibold text-ink/55">Jara collects these for you automatically.</p>
+      <InviteReward reward={state.referralReward} name={user.name} userId={user.id} wallet={state.config.chainMode === 'celo' && user.rootAddress ? (user.rootAddress as `0x${string}`) : null} flash={flash} onPay={onPay} />
       <ul className="mt-4 grid gap-2.5">
         {rewards.items.map((r) => (
           <li key={r.title} className="flex items-center gap-3">
@@ -2574,6 +2581,9 @@ const ACT_STYLE: Record<string, { icon: IconName; tint: string; sign: '+' | '−
   move: { icon: 'arrow', tint: 'bg-cream', sign: '' },
   ai: { icon: 'sparkle', tint: 'bg-forest-soft text-cream', sign: '−' },
   agent: { icon: 'jar', tint: 'bg-ink text-cream', sign: '' },
+  // GoodCash: G$ out to a bank, or naira in for G$. Amounts are naira, so no G$ sign.
+  cashout: { icon: 'arrow', tint: 'bg-mandarin', sign: '' },
+  topup: { icon: 'plus', tint: 'bg-crest-soft', sign: '' },
 }
 
 function AgentLog({ items, chainMode }: { items: Activity[]; chainMode: string }) {
